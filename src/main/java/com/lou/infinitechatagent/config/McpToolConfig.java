@@ -13,7 +13,7 @@ import org.springframework.context.annotation.Configuration;
 
 /**
  * @ClassName McpToolConfig
- * @Description TODO
+ * @Description
  * @Author Lou
  * @Date 2026/4/12 10:24
  */
