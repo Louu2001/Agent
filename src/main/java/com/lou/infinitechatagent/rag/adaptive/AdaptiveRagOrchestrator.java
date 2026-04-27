@@ -10,6 +10,8 @@ import com.lou.infinitechatagent.rag.adaptive.dto.AdaptiveRagDebug;
 import com.lou.infinitechatagent.rag.adaptive.dto.AdaptiveRagResponse;
 import com.lou.infinitechatagent.rag.adaptive.dto.AdaptiveRagStep;
 import com.lou.infinitechatagent.rag.adaptive.dto.AdaptiveRagToken;
+import com.lou.infinitechatagent.rag.adaptive.dto.EvidenceEvaluation;
+import com.lou.infinitechatagent.rag.adaptive.dto.QueryRewriteResult;
 import com.lou.infinitechatagent.rag.adaptive.dto.RetrievalPlan;
 import com.lou.infinitechatagent.rag.adaptive.dto.RetrievalStrategy;
 import com.lou.infinitechatagent.rag.adaptive.dto.ScoreDetail;
@@ -28,6 +30,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -58,6 +61,12 @@ public class AdaptiveRagOrchestrator {
     private RerankService rerankService;
 
     @Resource
+    private EvidenceEvaluator evidenceEvaluator;
+
+    @Resource
+    private QueryRewriteService queryRewriteService;
+
+    @Resource
     private ChatModel chatModel;
 
     @Resource
@@ -68,6 +77,12 @@ public class AdaptiveRagOrchestrator {
 
     @Value("${rag.adaptive.memory-max-messages:20}")
     private int memoryMaxMessages;
+
+    @Value("${rag.adaptive.max-rounds:2}")
+    private int maxRounds;
+
+    @Value("${rag.adaptive.rewrite.enabled:true}")
+    private boolean rewriteEnabled;
 
     @Value("${rag.token.max-input-tokens:1800}")
     private int maxInputTokens;
@@ -91,28 +106,41 @@ public class AdaptiveRagOrchestrator {
         }
 
         long retrievalStart = System.currentTimeMillis();
-        long roundStart = System.currentTimeMillis();
-        List<RetrievedChunk> candidates = search(plan);
-        List<RetrievedChunk> reranked = rerankService.rerank(plan.getQuery(), candidates, plan.getRerankTopK());
-        AtomicBoolean contextTruncated = new AtomicBoolean(false);
-        List<RetrievedChunk> chunks = applyTokenBudget(prompt, reranked, contextTruncated);
-        long retrievalCostMs = System.currentTimeMillis() - retrievalStart;
-        boolean hit = !chunks.isEmpty();
+        List<AdaptiveRagStep> trace = new ArrayList<>();
+        List<QueryRewriteResult> rewrites = new ArrayList<>();
+        List<RetrievedChunk> finalChunks = List.of();
+        List<RetrievedChunk> finalCandidates = List.of();
+        EvidenceEvaluation evaluation = null;
+        RetrievalPlan currentPlan = plan;
 
-        AdaptiveRagStep step = AdaptiveRagStep.builder()
-                .round(1)
-                .query(plan.getQuery())
-                .strategy(plan.getStrategy())
-                .knowledgeBase(plan.getKnowledgeBase())
-                .vectorTopK(plan.getVectorTopK())
-                .keywordTopK(plan.getKeywordTopK())
-                .candidateCount(candidates.size())
-                .rerankTopK(plan.getRerankTopK())
-                .retrievedCount(chunks.size())
-                .evidenceSufficient(hit)
-                .reason(hit ? plan.getReason() : "当前检索计划未召回可用证据。")
-                .costMs(System.currentTimeMillis() - roundStart)
-                .build();
+        for (int round = 1; round <= maxRounds; round++) {
+            RetrievalRoundResult roundResult = executeRetrievalRound(prompt, currentPlan, round);
+            trace.add(roundResult.step());
+            finalChunks = roundResult.rerankedChunks();
+            finalCandidates = roundResult.candidates();
+            evaluation = roundResult.evaluation();
+
+            if (Boolean.TRUE.equals(evaluation.getSufficient())) {
+                break;
+            }
+            if (!shouldRewrite(round, evaluation)) {
+                break;
+            }
+            QueryRewriteResult rewrite = queryRewriteService.rewrite(prompt, currentPlan, evaluation, roundResult.candidates());
+            rewrites.add(rewrite);
+            markRewrite(trace, rewrite);
+            if (!Boolean.TRUE.equals(rewrite.getRewritten())) {
+                break;
+            }
+            currentPlan = copyPlanWithQuery(currentPlan, rewrite.getRewrittenQuery());
+        }
+
+        AtomicBoolean contextTruncated = new AtomicBoolean(false);
+        List<RetrievedChunk> chunks = evaluation != null && Boolean.TRUE.equals(evaluation.getSufficient())
+                ? applyTokenBudget(prompt, finalChunks, contextTruncated)
+                : List.of();
+        long retrievalCostMs = System.currentTimeMillis() - retrievalStart;
+        boolean hit = evaluation != null && Boolean.TRUE.equals(evaluation.getSufficient()) && !chunks.isEmpty();
 
         if (!hit) {
             saveMemory(request.getSessionId(), prompt, MISS_ANSWER);
@@ -120,18 +148,20 @@ public class AdaptiveRagOrchestrator {
                     .answer(MISS_ANSWER)
                     .citations(List.of())
                     .hit(false)
-                    .strategy("ADAPTIVE_" + plan.getStrategy())
-                    .rounds(1)
+                    .strategy("ADAPTIVE_" + currentPlan.getStrategy())
+                    .rounds(trace.size())
                     .debug(buildDebug(
                             request.getDebug(),
-                            plan,
-                            List.of(step),
+                            currentPlan,
+                            trace,
                             System.currentTimeMillis() - start,
                             retrievalCostMs,
                             0L,
                             estimateTokens(prompt),
                             false,
-                            List.of()
+                            buildScoreDetails(finalChunks),
+                            evaluation,
+                            rewrites
                     ))
                     .build();
         }
@@ -153,24 +183,26 @@ public class AdaptiveRagOrchestrator {
         saveMemory(request.getSessionId(), prompt, answer);
 
         log.info("Adaptive RAG | strategy={} | candidates={} | retrieved={} | retrievalCost={}ms | modelCost={}ms",
-                plan.getStrategy(), candidates.size(), chunks.size(), retrievalCostMs, modelCostMs);
+                currentPlan.getStrategy(), finalCandidates.size(), chunks.size(), retrievalCostMs, modelCostMs);
 
         return AdaptiveRagResponse.builder()
                 .answer(answer)
                 .citations(citations)
                 .hit(true)
-                .strategy("ADAPTIVE_" + plan.getStrategy())
-                .rounds(1)
+                .strategy("ADAPTIVE_" + currentPlan.getStrategy())
+                .rounds(trace.size())
                 .debug(buildDebug(
                         request.getDebug(),
-                        plan,
-                        List.of(step),
+                        currentPlan,
+                        trace,
                         System.currentTimeMillis() - start,
                         retrievalCostMs,
                         modelCostMs,
                         estimateTokens(buildSystemPrompt() + userPrompt),
                         contextTruncated.get(),
-                        buildScoreDetails(chunks)
+                        buildScoreDetails(chunks),
+                        evaluation,
+                        rewrites
                 ))
                 .build();
     }
@@ -245,6 +277,8 @@ public class AdaptiveRagOrchestrator {
                         modelCostMs,
                         estimatedInputTokens,
                         false,
+                        List.of(),
+                        null,
                         List.of()
                 ))
                 .build();
@@ -258,13 +292,17 @@ public class AdaptiveRagOrchestrator {
                                         long modelMs,
                                         int estimatedInputTokens,
                                         boolean contextTruncated,
-                                        List<ScoreDetail> scoreDetails) {
+                                        List<ScoreDetail> scoreDetails,
+                                        EvidenceEvaluation evidenceEvaluation,
+                                        List<QueryRewriteResult> queryRewrites) {
         if (!Boolean.TRUE.equals(debugEnabled)) {
             return null;
         }
         return AdaptiveRagDebug.builder()
                 .retrievalPlan(plan)
                 .adaptiveTrace(trace)
+                .evidenceEvaluation(evidenceEvaluation)
+                .queryRewrites(queryRewrites)
                 .cost(AdaptiveRagCost.builder()
                         .totalMs(totalMs)
                         .retrievalMs(retrievalMs)
@@ -275,6 +313,61 @@ public class AdaptiveRagOrchestrator {
                         .contextTruncated(contextTruncated)
                         .build())
                 .scoreDetails(scoreDetails)
+                .build();
+    }
+
+    private RetrievalRoundResult executeRetrievalRound(String prompt, RetrievalPlan plan, int round) {
+        long roundStart = System.currentTimeMillis();
+        List<RetrievedChunk> candidates = search(plan);
+        List<RetrievedChunk> reranked = rerankService.rerank(plan.getQuery(), candidates, plan.getRerankTopK());
+        EvidenceEvaluation evaluation = evidenceEvaluator.evaluate(prompt, plan, reranked);
+        AdaptiveRagStep step = AdaptiveRagStep.builder()
+                .round(round)
+                .query(plan.getQuery())
+                .strategy(plan.getStrategy())
+                .knowledgeBase(plan.getKnowledgeBase())
+                .vectorTopK(plan.getVectorTopK())
+                .keywordTopK(plan.getKeywordTopK())
+                .candidateCount(candidates.size())
+                .rerankTopK(plan.getRerankTopK())
+                .retrievedCount(reranked.size())
+                .evidenceSufficient(evaluation.getSufficient())
+                .topScore(evaluation.getTopScore())
+                .coverageScore(evaluation.getCoverageScore())
+                .missingAspects(evaluation.getMissingAspects())
+                .reason(evaluation.getReason())
+                .costMs(System.currentTimeMillis() - roundStart)
+                .build();
+        return new RetrievalRoundResult(candidates, reranked, evaluation, step);
+    }
+
+    private boolean shouldRewrite(int round, EvidenceEvaluation evaluation) {
+        return rewriteEnabled
+                && round < maxRounds
+                && evaluation != null
+                && Boolean.TRUE.equals(evaluation.getShouldRewrite());
+    }
+
+    private void markRewrite(List<AdaptiveRagStep> trace, QueryRewriteResult rewrite) {
+        if (trace.isEmpty()) {
+            return;
+        }
+        AdaptiveRagStep lastStep = trace.get(trace.size() - 1);
+        lastStep.setRewritten(rewrite.getRewritten());
+        lastStep.setRewriteReason(rewrite.getReason());
+    }
+
+    private RetrievalPlan copyPlanWithQuery(RetrievalPlan source, String query) {
+        return RetrievalPlan.builder()
+                .needRetrieval(source.getNeedRetrieval())
+                .knowledgeBase(source.getKnowledgeBase())
+                .strategy(source.getStrategy())
+                .query(query)
+                .vectorTopK(source.getVectorTopK())
+                .keywordTopK(source.getKeywordTopK())
+                .rerankTopK(source.getRerankTopK())
+                .reason(source.getReason())
+                .confidence(source.getConfidence())
                 .build();
     }
 
@@ -496,5 +589,11 @@ public class AdaptiveRagOrchestrator {
 
     private String normalize(String prompt) {
         return prompt == null ? "" : prompt.trim();
+    }
+
+    private record RetrievalRoundResult(List<RetrievedChunk> candidates,
+                                        List<RetrievedChunk> rerankedChunks,
+                                        EvidenceEvaluation evaluation,
+                                        AdaptiveRagStep step) {
     }
 }

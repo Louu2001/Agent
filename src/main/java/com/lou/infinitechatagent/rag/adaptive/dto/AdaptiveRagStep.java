@@ -5,6 +5,8 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.util.List;
+
 @Data
 @Builder
 @NoArgsConstructor
@@ -30,6 +32,16 @@ public class AdaptiveRagStep {
     private Integer retrievedCount;
 
     private Boolean evidenceSufficient;
+
+    private Double topScore;
+
+    private Double coverageScore;
+
+    private List<String> missingAspects;
+
+    private Boolean rewritten;
+
+    private String rewriteReason;
 
     private String reason;
 

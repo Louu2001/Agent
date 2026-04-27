@@ -4,12 +4,10 @@ import com.lou.infinitechatagent.rag.adaptive.dto.AdaptiveRagRequest;
 import com.lou.infinitechatagent.rag.adaptive.dto.RetrievalPlan;
 import com.lou.infinitechatagent.rag.adaptive.dto.RetrievalStrategy;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.stereotype.Component;
 
 import java.util.Locale;
 import java.util.regex.Pattern;
 
-@Component
 public class RuleBasedRetrievalPlanner implements RetrievalPlanner {
 
     private static final Pattern CODE_OR_IDENTIFIER_PATTERN = Pattern.compile(

@@ -17,6 +17,10 @@ public class AdaptiveRagDebug {
 
     private List<AdaptiveRagStep> adaptiveTrace;
 
+    private EvidenceEvaluation evidenceEvaluation;
+
+    private List<QueryRewriteResult> queryRewrites;
+
     private AdaptiveRagCost cost;
 
     private AdaptiveRagToken token;
