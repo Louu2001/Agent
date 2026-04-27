@@ -4,6 +4,7 @@ import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import com.lou.infinitechatagent.agent.governance.dto.ToolGovernanceDecision;
 
 @Data
 @Builder
@@ -24,4 +25,6 @@ public class ReActStep {
     private AgentAction action;
 
     private AgentObservation observation;
+
+    private ToolGovernanceDecision toolGovernance;
 }

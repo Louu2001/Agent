@@ -118,6 +118,11 @@ memory:
     min-confidence: 0.55
 
 agent:
+  tool-governance:
+    enabled: true
+    confirmation-threshold: HIGH
+    prompt-injection-check:
+      enabled: true
   react:
     max-output-tokens: 500
     memory-max-messages: 20

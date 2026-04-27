@@ -7,6 +7,8 @@ import com.lou.infinitechatagent.agent.dto.AgentPlan;
 import com.lou.infinitechatagent.agent.dto.AgentRequest;
 import com.lou.infinitechatagent.agent.dto.AgentResponse;
 import com.lou.infinitechatagent.agent.dto.ReActStep;
+import com.lou.infinitechatagent.agent.governance.ToolGovernanceService;
+import com.lou.infinitechatagent.agent.governance.dto.ToolGovernanceDecision;
 import com.lou.infinitechatagent.agent.planner.LlmAgentPlanner;
 import com.lou.infinitechatagent.agent.planner.RuleBasedAgentPlanner;
 import com.lou.infinitechatagent.memory.MemoryAgent;
@@ -56,6 +58,9 @@ public class ReActAgentOrchestrator {
     @Resource
     private LlmAgentPlanner llmAgentPlanner;
 
+    @Resource
+    private ToolGovernanceService toolGovernanceService;
+
     @Value("${agent.react.max-output-tokens:500}")
     private int maxOutputTokens;
 
@@ -72,12 +77,22 @@ public class ReActAgentOrchestrator {
         MemoryContext memoryContext = memoryTrace.getContext();
         AgentPlan plan = plan(prompt);
         AgentAction action = plan.getAction();
+        ToolGovernanceDecision governanceDecision = toolGovernanceService.evaluate(
+                request.getUserId(),
+                request.getSessionId(),
+                prompt,
+                action,
+                request.getConfirmedTools());
+
+        if (!Boolean.TRUE.equals(governanceDecision.getAllowed())) {
+            return blockedByGovernance(prompt, plan, governanceDecision, start);
+        }
 
         return switch (action.getType()) {
-            case HYBRID_SEARCH -> answerWithRag(request.getUserId(), request.getSessionId(), prompt, plan, start);
-            case CURRENT_TIME -> answerWithCurrentTime(request.getUserId(), request.getSessionId(), prompt, plan, start);
-            case NO_RETRIEVAL_ANSWER -> answerDirectly(request.getUserId(), request.getSessionId(), prompt, plan, memoryContext, start);
-            default -> answerDirectly(request.getUserId(), request.getSessionId(), prompt, plan, memoryContext, start);
+            case HYBRID_SEARCH -> answerWithRag(request.getUserId(), request.getSessionId(), prompt, plan, governanceDecision, start);
+            case CURRENT_TIME -> answerWithCurrentTime(request.getUserId(), request.getSessionId(), prompt, plan, governanceDecision, start);
+            case NO_RETRIEVAL_ANSWER -> answerDirectly(request.getUserId(), request.getSessionId(), prompt, plan, memoryContext, governanceDecision, start);
+            default -> answerDirectly(request.getUserId(), request.getSessionId(), prompt, plan, memoryContext, governanceDecision, start);
         };
     }
 
@@ -88,7 +103,12 @@ public class ReActAgentOrchestrator {
         return ruleBasedAgentPlanner.plan(prompt);
     }
 
-    private AgentResponse answerWithRag(Long userId, Long sessionId, String prompt, AgentPlan plan, long start) {
+    private AgentResponse answerWithRag(Long userId,
+                                        Long sessionId,
+                                        String prompt,
+                                        AgentPlan plan,
+                                        ToolGovernanceDecision governanceDecision,
+                                        long start) {
         long actionStart = System.currentTimeMillis();
         RagQueryResponse ragResponse = ragQueryService.chatWithCitations(sessionId, prompt);
         memoryAgent.afterAnswer(userId, sessionId, prompt);
@@ -108,6 +128,7 @@ public class ReActAgentOrchestrator {
                         .citationCount(ragResponse.getCitations() == null ? 0 : ragResponse.getCitations().size())
                         .costMs(System.currentTimeMillis() - actionStart)
                         .build())
+                .toolGovernance(governanceDecision)
                 .build();
 
         log.info("ReAct Agent | planner={} | action={} | confidence={} | hit={} | citations={}",
@@ -128,10 +149,16 @@ public class ReActAgentOrchestrator {
                 .retrievalCostMs(ragResponse.getRetrievalCostMs())
                 .estimatedInputTokens(ragResponse.getEstimatedInputTokens())
                 .contextTruncated(ragResponse.getContextTruncated())
+                .toolGovernance(governanceDecision)
                 .build();
     }
 
-    private AgentResponse answerWithCurrentTime(Long userId, Long sessionId, String prompt, AgentPlan plan, long start) {
+    private AgentResponse answerWithCurrentTime(Long userId,
+                                                Long sessionId,
+                                                String prompt,
+                                                AgentPlan plan,
+                                                ToolGovernanceDecision governanceDecision,
+                                                long start) {
         LocalDateTime now = LocalDateTime.now(ZoneId.of("Asia/Shanghai"));
         String answer = """
                 回答：
@@ -156,6 +183,7 @@ public class ReActAgentOrchestrator {
                         .citationCount(0)
                         .costMs(System.currentTimeMillis() - start)
                         .build())
+                .toolGovernance(governanceDecision)
                 .build();
 
         return AgentResponse.builder()
@@ -169,6 +197,7 @@ public class ReActAgentOrchestrator {
                 .retrievalCostMs(0L)
                 .estimatedInputTokens(0)
                 .contextTruncated(false)
+                .toolGovernance(governanceDecision)
                 .build();
     }
 
@@ -177,6 +206,7 @@ public class ReActAgentOrchestrator {
                                          String prompt,
                                          AgentPlan plan,
                                          MemoryContext memoryContext,
+                                         ToolGovernanceDecision governanceDecision,
                                          long start) {
         long modelStart = System.currentTimeMillis();
         ChatResponse response = chatModel.chat(ChatRequest.builder()
@@ -212,6 +242,7 @@ public class ReActAgentOrchestrator {
                         .citationCount(0)
                         .costMs(modelCostMs)
                         .build())
+                .toolGovernance(governanceDecision)
                 .build();
 
         return AgentResponse.builder()
@@ -225,6 +256,48 @@ public class ReActAgentOrchestrator {
                 .retrievalCostMs(0L)
                 .estimatedInputTokens(estimateTokens(prompt))
                 .contextTruncated(false)
+                .toolGovernance(governanceDecision)
+                .build();
+    }
+
+    private AgentResponse blockedByGovernance(String prompt,
+                                              AgentPlan plan,
+                                              ToolGovernanceDecision governanceDecision,
+                                              long start) {
+        String answer = """
+                回答：
+                工具调用已被权限护轨拦截：%s
+
+                引用：
+                无
+                """.formatted(governanceDecision.getReason());
+        ReActStep step = ReActStep.builder()
+                .step(1)
+                .thought(plan.getThought())
+                .needRetrieval(plan.getNeedRetrieval())
+                .actionReason(plan.getActionReason())
+                .confidence(plan.getConfidence())
+                .action(plan.getAction())
+                .toolGovernance(governanceDecision)
+                .observation(AgentObservation.builder()
+                        .success(false)
+                        .summary("tool governance blocked execution")
+                        .citationCount(0)
+                        .costMs(System.currentTimeMillis() - start)
+                        .build())
+                .build();
+        return AgentResponse.builder()
+                .answer(answer)
+                .finalAction(AgentActionType.FINAL_ANSWER)
+                .strategy("REACT_TOOL_BLOCKED")
+                .citations(List.of())
+                .reactTrace(List.of(step))
+                .costMs(System.currentTimeMillis() - start)
+                .modelCostMs(0L)
+                .retrievalCostMs(0L)
+                .estimatedInputTokens(estimateTokens(prompt))
+                .contextTruncated(false)
+                .toolGovernance(governanceDecision)
                 .build();
     }
 

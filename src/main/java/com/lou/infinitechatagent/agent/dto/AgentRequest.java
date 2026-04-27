@@ -12,4 +12,6 @@ public class AgentRequest {
     private String prompt;
 
     private Boolean debug;
+
+    private java.util.Set<String> confirmedTools;
 }

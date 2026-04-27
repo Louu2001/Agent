@@ -20,4 +20,6 @@ public class AgentTool {
     private String riskLevel;
 
     private Boolean enabled;
+
+    private Boolean confirmationRequired;
 }

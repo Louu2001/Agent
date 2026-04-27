@@ -24,13 +24,15 @@ public class ToolRegistry {
                     .description("查询 Asia/Shanghai 当前日期和时间。")
                     .riskLevel("LOW")
                     .enabled(true)
+                    .confirmationRequired(false)
                     .build(),
             AgentTool.builder()
                     .name(TOOL_HYBRID_SEARCH)
                     .actionType(AgentActionType.HYBRID_SEARCH)
                     .description("调用企业知识库 Hybrid RAG，执行向量检索、关键词检索、RRF 融合、重排序和引用溯源。")
-                    .riskLevel("LOW")
+                    .riskLevel("MEDIUM")
                     .enabled(true)
+                    .confirmationRequired(false)
                     .build(),
             AgentTool.builder()
                     .name(TOOL_DIRECT_ANSWER)
@@ -38,6 +40,7 @@ public class ToolRegistry {
                     .description("不调用外部工具或知识库，直接由模型回答通用问题。")
                     .riskLevel("LOW")
                     .enabled(true)
+                    .confirmationRequired(false)
                     .build()
     ).stream().collect(Collectors.toUnmodifiableMap(AgentTool::getActionType, Function.identity()));
 
