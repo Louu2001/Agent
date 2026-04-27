@@ -1,18 +1,23 @@
 spring:
   application:
     name: InfiniteChat-Agent
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: ${MYSQL_URL:jdbc:mysql://localhost:3306/agent?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true}
+    username: ${MYSQL_USERNAME:root}
+    password: ${MYSQL_PASSWORD:}
   data:
     redis:
-      host: 14.103.140.112
-      port: 59000
-      password: e65K4t8w2
-      ttl: 3600
-      timeout: 30000
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      ttl: ${REDIS_TTL:3600}
+      timeout: ${REDIS_TIMEOUT:30000}
   mail:
-    host: smtp.qq.com  # 以QQ邮箱为例
-    port: 587
-    username: 1187602886@qq.com # 你的发件账号
-    password: fbcskvmgsuvpfica # 你的SMTP授权码
+    host: ${MAIL_HOST:smtp.qq.com}
+    port: ${MAIL_PORT:587}
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
     properties:
       mail:
         smtp:
@@ -32,31 +37,47 @@ logging:
     dev.langchain4j.mcp: ERROR
 
 pgvector:
-  database: dp
-  host: 14.103.140.112
-  port : 54328
-  user: root
-  password: e65K4t7z1
-  table: dp_embedding
+  database: ${PGVECTOR_DATABASE:dp}
+  host: ${PGVECTOR_HOST:localhost}
+  port : ${PGVECTOR_PORT:5432}
+  user: ${PGVECTOR_USER:postgres}
+  password: ${PGVECTOR_PASSWORD:}
+  table: ${PGVECTOR_TABLE:dp_embedding}
 
 langchain4j:
   community:
     dashscope:
       chat-model:
-        model-name: qwen-max
-        api-key: sk-55591b5c976d4cf99185b296b939858a
+        model-name: ${DASHSCOPE_CHAT_MODEL:qwen-plus}
+        api-key: ${DASHSCOPE_API_KEY:}
       embedding-model:
-        model-name: text-embedding-v4
-        api-key: sk-55591b5c976d4cf99185b296b939858a
+        model-name: ${DASHSCOPE_EMBEDDING_MODEL:text-embedding-v4}
+        api-key: ${DASHSCOPE_API_KEY:}
       streaming-chat-model:
-        model-name: qwen-max
-        api-key: sk-55591b5c976d4cf99185b296b939858a
+        model-name: ${DASHSCOPE_STREAMING_MODEL:qwen-plus}
+        api-key: ${DASHSCOPE_API_KEY:}
 
 bigmodel:
-  api-key: faa2cef0d06e43f2a6419a067be05e7d.Puf9GRTQjAbD4UQd
+  api-key: ${BIGMODEL_API_KEY:}
 
 rag:
-  docs-path: E:\Java\Agent\InfiniteChat-Agent\src\main\resources\docs
+  docs-path: ${RAG_DOCS_PATH:E:\Java\Agent\InfiniteChat-Agent\src\main\resources\docs}
+  retrieval:
+    vector-results: 20
+    keyword-results: 20
+    candidate-results: 20
+  rerank:
+    enabled: true
+    top-k: 5
+  citation:
+    min-score: 0.75
+    snippet-max-chars: 500
+    max-output-tokens: 500
+  token:
+    max-input-tokens: 1800
+    reserved-system-tokens: 300
+    min-chunk-chars: 180
+    chars-per-token: 2.0
 
 management:
   endpoints:
@@ -66,5 +87,3 @@ management:
   endpoint:
     health:
       show-details: always
-
-

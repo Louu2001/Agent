@@ -35,7 +35,7 @@ public class EmbeddingStoreConfig {
 
         return PgVectorEmbeddingStore.builder()
                 .table(table)
-                .dropTableFirst(true)
+                .dropTableFirst(false)
                 .createTable(true)
                 .host(host)
                 .port(port)
