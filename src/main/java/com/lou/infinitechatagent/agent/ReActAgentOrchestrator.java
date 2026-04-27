@@ -9,6 +9,10 @@ import com.lou.infinitechatagent.agent.dto.AgentResponse;
 import com.lou.infinitechatagent.agent.dto.ReActStep;
 import com.lou.infinitechatagent.agent.planner.LlmAgentPlanner;
 import com.lou.infinitechatagent.agent.planner.RuleBasedAgentPlanner;
+import com.lou.infinitechatagent.memory.MemoryAgent;
+import com.lou.infinitechatagent.memory.dto.MemoryContext;
+import com.lou.infinitechatagent.memory.dto.MemoryItem;
+import com.lou.infinitechatagent.memory.dto.MemoryTrace;
 import com.lou.infinitechatagent.rag.RagQueryService;
 import com.lou.infinitechatagent.rag.dto.RagQueryResponse;
 import dev.langchain4j.community.store.memory.chat.redis.RedisChatMemoryStore;
@@ -44,6 +48,9 @@ public class ReActAgentOrchestrator {
     private RedisChatMemoryStore redisChatMemoryStore;
 
     @Resource
+    private MemoryAgent memoryAgent;
+
+    @Resource
     private RuleBasedAgentPlanner ruleBasedAgentPlanner;
 
     @Resource
@@ -61,14 +68,16 @@ public class ReActAgentOrchestrator {
     public AgentResponse chat(AgentRequest request) {
         long start = System.currentTimeMillis();
         String prompt = normalizePrompt(request.getPrompt());
+        MemoryTrace memoryTrace = memoryAgent.readContext(request.getUserId(), request.getSessionId(), prompt);
+        MemoryContext memoryContext = memoryTrace.getContext();
         AgentPlan plan = plan(prompt);
         AgentAction action = plan.getAction();
 
         return switch (action.getType()) {
-            case HYBRID_SEARCH -> answerWithRag(request.getSessionId(), prompt, plan, start);
-            case CURRENT_TIME -> answerWithCurrentTime(request.getSessionId(), prompt, plan, start);
-            case NO_RETRIEVAL_ANSWER -> answerDirectly(request.getSessionId(), prompt, plan, start);
-            default -> answerDirectly(request.getSessionId(), prompt, plan, start);
+            case HYBRID_SEARCH -> answerWithRag(request.getUserId(), request.getSessionId(), prompt, plan, start);
+            case CURRENT_TIME -> answerWithCurrentTime(request.getUserId(), request.getSessionId(), prompt, plan, start);
+            case NO_RETRIEVAL_ANSWER -> answerDirectly(request.getUserId(), request.getSessionId(), prompt, plan, memoryContext, start);
+            default -> answerDirectly(request.getUserId(), request.getSessionId(), prompt, plan, memoryContext, start);
         };
     }
 
@@ -79,9 +88,10 @@ public class ReActAgentOrchestrator {
         return ruleBasedAgentPlanner.plan(prompt);
     }
 
-    private AgentResponse answerWithRag(Long sessionId, String prompt, AgentPlan plan, long start) {
+    private AgentResponse answerWithRag(Long userId, Long sessionId, String prompt, AgentPlan plan, long start) {
         long actionStart = System.currentTimeMillis();
         RagQueryResponse ragResponse = ragQueryService.chatWithCitations(sessionId, prompt);
+        memoryAgent.afterAnswer(userId, sessionId, prompt);
         ReActStep step = ReActStep.builder()
                 .step(1)
                 .thought(plan.getThought())
@@ -121,7 +131,7 @@ public class ReActAgentOrchestrator {
                 .build();
     }
 
-    private AgentResponse answerWithCurrentTime(Long sessionId, String prompt, AgentPlan plan, long start) {
+    private AgentResponse answerWithCurrentTime(Long userId, Long sessionId, String prompt, AgentPlan plan, long start) {
         LocalDateTime now = LocalDateTime.now(ZoneId.of("Asia/Shanghai"));
         String answer = """
                 回答：
@@ -129,8 +139,9 @@ public class ReActAgentOrchestrator {
 
                 引用：
                 无
-                """.formatted(now.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss EEEE", Locale.CHINA)));
+        """.formatted(now.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss EEEE", Locale.CHINA)));
         saveMemory(sessionId, prompt, answer);
+        memoryAgent.afterAnswer(userId, sessionId, prompt);
 
         ReActStep step = ReActStep.builder()
                 .step(1)
@@ -161,7 +172,12 @@ public class ReActAgentOrchestrator {
                 .build();
     }
 
-    private AgentResponse answerDirectly(Long sessionId, String prompt, AgentPlan plan, long start) {
+    private AgentResponse answerDirectly(Long userId,
+                                         Long sessionId,
+                                         String prompt,
+                                         AgentPlan plan,
+                                         MemoryContext memoryContext,
+                                         long start) {
         long modelStart = System.currentTimeMillis();
         ChatResponse response = chatModel.chat(ChatRequest.builder()
                 .messages(
@@ -174,13 +190,14 @@ public class ReActAgentOrchestrator {
                                 引用：
                                 无
                                 """),
-                        UserMessage.from(prompt)
+                        UserMessage.from(buildDirectUserPrompt(prompt, memoryContext))
                 )
                 .maxOutputTokens(maxOutputTokens)
                 .build());
         long modelCostMs = System.currentTimeMillis() - modelStart;
         String answer = ensureDirectAnswerFormat(response.aiMessage().text());
         saveMemory(sessionId, prompt, answer);
+        memoryAgent.afterAnswer(userId, sessionId, prompt);
 
         ReActStep step = ReActStep.builder()
                 .step(1)
@@ -225,6 +242,43 @@ public class ReActAgentOrchestrator {
             return answer;
         }
         return "回答：\n" + answer.strip() + "\n\n引用：\n无";
+    }
+
+    private String buildDirectUserPrompt(String prompt, MemoryContext memoryContext) {
+        return """
+                记忆上下文：
+                %s
+
+                用户问题：
+                %s
+                """.formatted(memoryContextText(memoryContext), prompt);
+    }
+
+    private String memoryContextText(MemoryContext memoryContext) {
+        if (memoryContext == null
+                || (!Boolean.TRUE.equals(memoryContext.getSummaryInjected())
+                && !Boolean.TRUE.equals(memoryContext.getLongTermMemoryInjected()))) {
+            return "暂无。";
+        }
+        StringBuilder builder = new StringBuilder();
+        if (Boolean.TRUE.equals(memoryContext.getSummaryInjected())) {
+            builder.append("会话摘要：\n")
+                    .append(memoryContext.getSessionSummary())
+                    .append("\n");
+        }
+        if (Boolean.TRUE.equals(memoryContext.getLongTermMemoryInjected())) {
+            builder.append("长期记忆：\n");
+            for (MemoryItem memory : memoryContext.getLongTermMemories()) {
+                builder.append("- [")
+                        .append(memory.getMemoryType())
+                        .append("] ")
+                        .append(memory.getSummary() == null || memory.getSummary().isBlank()
+                                ? memory.getContent()
+                                : memory.getSummary())
+                        .append("\n");
+            }
+        }
+        return builder.toString().strip();
     }
 
     private int estimateTokens(String text) {

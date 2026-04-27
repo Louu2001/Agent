@@ -98,6 +98,25 @@ rag:
     rewrite:
       enabled: true
 
+memory:
+  enabled: true
+  summary:
+    enabled: true
+    trigger-turns: 6
+    window-messages: 30
+    max-output-tokens: 500
+  context:
+    max-summary-chars: 800
+    max-memory-items: 5
+    max-memory-chars: 1200
+    min-relevance-score: 0.08
+  long-term:
+    enabled: true
+    max-items: 5
+  reflection:
+    enabled: true
+    min-confidence: 0.55
+
 agent:
   react:
     max-output-tokens: 500

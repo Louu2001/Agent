@@ -4,6 +4,10 @@ import com.lou.infinitechatagent.rag.HybridSearchService;
 import com.lou.infinitechatagent.rag.KeywordSearchService;
 import com.lou.infinitechatagent.rag.RerankService;
 import com.lou.infinitechatagent.rag.VectorSearchService;
+import com.lou.infinitechatagent.memory.MemoryAgent;
+import com.lou.infinitechatagent.memory.dto.MemoryContext;
+import com.lou.infinitechatagent.memory.dto.MemoryItem;
+import com.lou.infinitechatagent.memory.dto.MemoryTrace;
 import com.lou.infinitechatagent.rag.adaptive.dto.AdaptiveRagRequest;
 import com.lou.infinitechatagent.rag.adaptive.dto.AdaptiveRagCost;
 import com.lou.infinitechatagent.rag.adaptive.dto.AdaptiveRagDebug;
@@ -72,6 +76,9 @@ public class AdaptiveRagOrchestrator {
     @Resource
     private RedisChatMemoryStore redisChatMemoryStore;
 
+    @Resource
+    private MemoryAgent memoryAgent;
+
     @Value("${rag.adaptive.max-output-tokens:500}")
     private int maxOutputTokens;
 
@@ -99,10 +106,12 @@ public class AdaptiveRagOrchestrator {
     public AdaptiveRagResponse chat(AdaptiveRagRequest request) {
         long start = System.currentTimeMillis();
         String prompt = normalize(request.getPrompt());
+        MemoryTrace memoryTrace = memoryAgent.readContext(request.getUserId(), request.getSessionId(), prompt);
+        MemoryContext memoryContext = memoryTrace.getContext();
         RetrievalPlan plan = retrievalPlanner.plan(request);
 
         if (!Boolean.TRUE.equals(plan.getNeedRetrieval())) {
-            return handleNoRetrieval(request.getSessionId(), prompt, plan, start, request.getDebug());
+            return handleNoRetrieval(request.getUserId(), request.getSessionId(), prompt, plan, memoryContext, start, request.getDebug());
         }
 
         long retrievalStart = System.currentTimeMillis();
@@ -143,7 +152,14 @@ public class AdaptiveRagOrchestrator {
         boolean hit = evaluation != null && Boolean.TRUE.equals(evaluation.getSufficient()) && !chunks.isEmpty();
 
         if (!hit) {
+            MemoryTrace reflectionTrace = memoryAgent.reflectEvidenceFailure(
+                    request.getUserId(),
+                    request.getSessionId(),
+                    prompt,
+                    evaluation,
+                    trace.size());
             saveMemory(request.getSessionId(), prompt, MISS_ANSWER);
+            MemoryTrace afterAnswerTrace = memoryAgent.afterAnswer(request.getUserId(), request.getSessionId(), prompt);
             return AdaptiveRagResponse.builder()
                     .answer(MISS_ANSWER)
                     .citations(List.of())
@@ -161,12 +177,14 @@ public class AdaptiveRagOrchestrator {
                             false,
                             buildScoreDetails(finalChunks),
                             evaluation,
-                            rewrites
+                            rewrites,
+                            memoryContext,
+                            mergeMemoryTrace(memoryTrace, reflectionTrace, afterAnswerTrace)
                     ))
                     .build();
         }
 
-        String userPrompt = buildUserPrompt(prompt, chunks);
+        String userPrompt = buildUserPrompt(prompt, chunks, memoryContext);
         long modelStart = System.currentTimeMillis();
         ChatResponse response = chatModel.chat(ChatRequest.builder()
                 .messages(
@@ -181,6 +199,7 @@ public class AdaptiveRagOrchestrator {
                 .toList();
         String answer = ensureCitationSection(response.aiMessage().text(), citations);
         saveMemory(request.getSessionId(), prompt, answer);
+        MemoryTrace afterAnswerTrace = memoryAgent.afterAnswer(request.getUserId(), request.getSessionId(), prompt);
 
         log.info("Adaptive RAG | strategy={} | candidates={} | retrieved={} | retrievalCost={}ms | modelCost={}ms",
                 currentPlan.getStrategy(), finalCandidates.size(), chunks.size(), retrievalCostMs, modelCostMs);
@@ -202,19 +221,24 @@ public class AdaptiveRagOrchestrator {
                         contextTruncated.get(),
                         buildScoreDetails(chunks),
                         evaluation,
-                        rewrites
+                        rewrites,
+                        memoryContext,
+                        mergeMemoryTrace(memoryTrace, afterAnswerTrace)
                 ))
                 .build();
     }
 
-    private AdaptiveRagResponse handleNoRetrieval(Long sessionId,
+    private AdaptiveRagResponse handleNoRetrieval(Long userId,
+                                                  Long sessionId,
                                                   String prompt,
                                                   RetrievalPlan plan,
+                                                  MemoryContext memoryContext,
                                                   long start,
                                                   Boolean debug) {
         if (plan.getStrategy() == RetrievalStrategy.FOLLOW_UP_REQUIRED) {
             String answer = "回答：\n请补充错误码、配置项、接口名或更具体的业务对象，我才能准确检索知识库。\n\n引用：\n无";
             saveMemory(sessionId, prompt, answer);
+            memoryAgent.afterAnswer(userId, sessionId, prompt);
             return buildNoRetrievalResponse(answer, false, plan, start, "需要追问补充信息。", 0L, 0, Boolean.TRUE.equals(debug));
         }
 
@@ -230,12 +254,13 @@ public class AdaptiveRagOrchestrator {
                                 引用：
                                 无
                                 """),
-                        UserMessage.from(prompt)
+                        UserMessage.from(buildDirectUserPrompt(prompt, memoryContext))
                 )
                 .maxOutputTokens(maxOutputTokens)
                 .build());
         String answer = ensureNoCitationAnswer(response.aiMessage().text());
         saveMemory(sessionId, prompt, answer);
+        memoryAgent.afterAnswer(userId, sessionId, prompt);
         long modelCostMs = System.currentTimeMillis() - modelStart;
         return buildNoRetrievalResponse(answer, true, plan, start, plan.getReason(), modelCostMs, estimateTokens(prompt), Boolean.TRUE.equals(debug));
     }
@@ -279,7 +304,9 @@ public class AdaptiveRagOrchestrator {
                         false,
                         List.of(),
                         null,
-                        List.of()
+                        List.of(),
+                        null,
+                        null
                 ))
                 .build();
     }
@@ -294,15 +321,20 @@ public class AdaptiveRagOrchestrator {
                                         boolean contextTruncated,
                                         List<ScoreDetail> scoreDetails,
                                         EvidenceEvaluation evidenceEvaluation,
-                                        List<QueryRewriteResult> queryRewrites) {
+                                        List<QueryRewriteResult> queryRewrites,
+                                        MemoryContext memoryContext,
+                                        MemoryTrace memoryTrace) {
         if (!Boolean.TRUE.equals(debugEnabled)) {
             return null;
         }
         return AdaptiveRagDebug.builder()
                 .retrievalPlan(plan)
+                .memoryContext(memoryContext)
+                .memoryTrace(memoryTrace)
                 .adaptiveTrace(trace)
                 .evidenceEvaluation(evidenceEvaluation)
                 .queryRewrites(queryRewrites)
+                .reflection(memoryTrace == null ? null : memoryTrace.getReflection())
                 .cost(AdaptiveRagCost.builder()
                         .totalMs(totalMs)
                         .retrievalMs(retrievalMs)
@@ -314,6 +346,29 @@ public class AdaptiveRagOrchestrator {
                         .build())
                 .scoreDetails(scoreDetails)
                 .build();
+    }
+
+    private MemoryTrace mergeMemoryTrace(MemoryTrace... traces) {
+        MemoryTrace merged = null;
+        long costMs = 0;
+        for (MemoryTrace trace : traces) {
+            if (trace == null) {
+                continue;
+            }
+            costMs += trace.getCostMs() == null ? 0 : trace.getCostMs();
+            if (merged == null) {
+                merged = trace;
+                continue;
+            }
+            merged = MemoryTrace.builder()
+                    .decision(trace.getDecision() == null ? merged.getDecision() : trace.getDecision())
+                    .context(merged.getContext() == null ? trace.getContext() : merged.getContext())
+                    .summaryRefreshed(Boolean.TRUE.equals(merged.getSummaryRefreshed()) || Boolean.TRUE.equals(trace.getSummaryRefreshed()))
+                    .reflection(trace.getReflection() == null ? merged.getReflection() : trace.getReflection())
+                    .costMs(costMs)
+                    .build();
+        }
+        return merged;
     }
 
     private RetrievalRoundResult executeRetrievalRound(String prompt, RetrievalPlan plan, int round) {
@@ -507,7 +562,7 @@ public class AdaptiveRagOrchestrator {
                 """;
     }
 
-    private String buildUserPrompt(String prompt, List<RetrievedChunk> chunks) {
+    private String buildUserPrompt(String prompt, List<RetrievedChunk> chunks, MemoryContext memoryContext) {
         String context = IntStream.range(0, chunks.size())
                 .mapToObj(index -> {
                     RetrievedChunk chunk = chunks.get(index);
@@ -526,12 +581,52 @@ public class AdaptiveRagOrchestrator {
                 })
                 .reduce("", (left, right) -> left + "\n" + right);
         return """
+                记忆上下文：
+                %s
+
                 用户问题：
                 %s
 
                 自适应检索片段：
                 %s
-                """.formatted(prompt, context);
+                """.formatted(memoryContextText(memoryContext), prompt, context);
+    }
+
+    private String buildDirectUserPrompt(String prompt, MemoryContext memoryContext) {
+        return """
+                记忆上下文：
+                %s
+
+                用户问题：
+                %s
+                """.formatted(memoryContextText(memoryContext), prompt);
+    }
+
+    private String memoryContextText(MemoryContext memoryContext) {
+        if (memoryContext == null
+                || (!Boolean.TRUE.equals(memoryContext.getSummaryInjected())
+                && !Boolean.TRUE.equals(memoryContext.getLongTermMemoryInjected()))) {
+            return "暂无。";
+        }
+        StringBuilder builder = new StringBuilder();
+        if (Boolean.TRUE.equals(memoryContext.getSummaryInjected())) {
+            builder.append("会话摘要：\n")
+                    .append(memoryContext.getSessionSummary())
+                    .append("\n");
+        }
+        if (Boolean.TRUE.equals(memoryContext.getLongTermMemoryInjected())) {
+            builder.append("长期记忆：\n");
+            for (MemoryItem memory : memoryContext.getLongTermMemories()) {
+                builder.append("- [")
+                        .append(memory.getMemoryType())
+                        .append("] ")
+                        .append(memory.getSummary() == null || memory.getSummary().isBlank()
+                                ? memory.getContent()
+                                : memory.getSummary())
+                        .append("\n");
+            }
+        }
+        return builder.toString().strip();
     }
 
     private String ensureCitationSection(String answer, List<Citation> citations) {
