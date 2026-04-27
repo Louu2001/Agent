@@ -31,9 +31,15 @@ public class RagConfig {
     @Value("${rag.docs-path}")
     private String docsPath;
 
+    @Value("${rag.chunk.segment-size:500}")
+    private int segmentSize;
+
+    @Value("${rag.chunk.segment-overlap:80}")
+    private int segmentOverlap;
+
     @Bean
     public EmbeddingStoreIngestor embeddingStoreIngestor(){
-        DocumentByParagraphSplitter paragraphSplitter = new DocumentByParagraphSplitter(300, 100);
+        DocumentByParagraphSplitter paragraphSplitter = new DocumentByParagraphSplitter(segmentSize, segmentOverlap);
 
         return EmbeddingStoreIngestor.builder()
                 .documentSplitter(paragraphSplitter)

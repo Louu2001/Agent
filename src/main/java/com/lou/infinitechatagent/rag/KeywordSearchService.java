@@ -28,7 +28,9 @@ public class KeywordSearchService {
                 .map(keyword -> "(content like ? or file_name like ? or chunk_id like ?)")
                 .toList());
         String sql = """
-                select chunk_id, doc_id, file_name, chunk_index, content, embedding_id
+                select chunk_id, doc_id, file_name, chunk_index,
+                       section_title, heading_path, chunk_type, char_count, token_estimate,
+                       content, embedding_id
                 from rag_chunk
                 where %s
                 limit ?
@@ -43,6 +45,11 @@ public class KeywordSearchService {
                     .chunkId(rs.getString("chunk_id"))
                     .fileName(rs.getString("file_name"))
                     .chunkIndex(rs.getInt("chunk_index"))
+                    .sectionTitle(rs.getString("section_title"))
+                    .headingPath(rs.getString("heading_path"))
+                    .chunkType(rs.getString("chunk_type"))
+                    .charCount((Integer) rs.getObject("char_count"))
+                    .tokenEstimate((Integer) rs.getObject("token_estimate"))
                     .text(limitText(content))
                     .retrievalSource("keyword")
                     .keywordScore(keywordScore(keywords, content))

@@ -156,6 +156,11 @@ public class RagQueryService {
                 .chunkId(source.getChunkId())
                 .fileName(source.getFileName())
                 .chunkIndex(source.getChunkIndex())
+                .sectionTitle(source.getSectionTitle())
+                .headingPath(source.getHeadingPath())
+                .chunkType(source.getChunkType())
+                .charCount(source.getCharCount())
+                .tokenEstimate(source.getTokenEstimate())
                 .text(text)
                 .vectorScore(source.getVectorScore())
                 .keywordScore(source.getKeywordScore())
@@ -201,8 +206,8 @@ public class RagQueryService {
                 xxx
 
                 引用：
-                [1] xxx.md 第3段
-                [2] xxx.md 第1段
+                [1] xxx.md「章节路径」第3段
+                [2] xxx.md「章节路径」第1段
                 回答正文中的关键结论可以使用 [1]、[2] 标记引用依据。
                 引用列表只能列出本次提供的知识片段编号，不得编造来源。
                 不得编造未出现在知识片段中的事实。
@@ -226,6 +231,7 @@ public class RagQueryService {
                     return String.format("""
                         [%d]
                         文件：%s
+                        章节：%s
                         段落：%s
                         来源：%s
                         向量分：%.4f
@@ -236,6 +242,7 @@ public class RagQueryService {
                         """,
                         index + 1,
                         chunk.getFileName(),
+                        displaySection(chunk),
                         chunk.getChunkIndex(),
                         chunk.getRetrievalSource(),
                         safeDouble(chunk.getVectorScore()),
@@ -262,8 +269,8 @@ public class RagQueryService {
                 这里写答案正文，关键结论后用 [1]、[2] 标注来源。
 
                 引用：
-                [1] 文件名 第x段
-                [2] 文件名 第y段
+                [1] 文件名「章节路径」第x段
+                [2] 文件名「章节路径」第y段
                 """, history, prompt, context);
     }
 
@@ -301,11 +308,30 @@ public class RagQueryService {
                     .append(citation.getIndex())
                     .append("] ")
                     .append(citation.getFileName())
+                    .append(displayCitationSection(citation))
                     .append(" 第")
                     .append(citation.getChunkIndex())
                     .append("段\n");
         }
         return builder.toString().trim();
+    }
+
+    private String displaySection(RetrievedChunk chunk) {
+        if (chunk.getHeadingPath() != null && !chunk.getHeadingPath().isBlank()) {
+            return chunk.getHeadingPath();
+        }
+        if (chunk.getSectionTitle() != null && !chunk.getSectionTitle().isBlank()) {
+            return chunk.getSectionTitle();
+        }
+        return "未标注";
+    }
+
+    private String displayCitationSection(Citation citation) {
+        String section = citation.getHeadingPath();
+        if (section == null || section.isBlank()) {
+            section = citation.getSectionTitle();
+        }
+        return section == null || section.isBlank() ? "" : "「" + section + "」";
     }
 
     private double safeDouble(Double value) {

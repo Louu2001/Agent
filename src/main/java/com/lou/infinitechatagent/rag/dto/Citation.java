@@ -21,6 +21,10 @@ public class Citation {
 
     private Integer chunkIndex;
 
+    private String sectionTitle;
+
+    private String headingPath;
+
     private String snippet;
 
     private String retrievalSource;

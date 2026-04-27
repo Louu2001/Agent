@@ -31,6 +31,7 @@ docs/
 
 - [RAG Citation, Hybrid Search and Rerank Design](./01-rag-enhancement/rag-citation-hybrid-rerank-design.md)
 - [Cost-aware RAG Token Optimization](./01-rag-enhancement/cost-aware-rag-token-optimization.md)
+- [Markdown-aware Chunking Design](./01-rag-enhancement/markdown-aware-chunking-design.md)
 - [RAG Citation Postman Collection](./01-rag-enhancement/postman/rag-citation.postman_collection.json)
 - [Hybrid RAG Rerank Postman Collection](./01-rag-enhancement/postman/hybrid-rag-rerank.postman_collection.json)
 

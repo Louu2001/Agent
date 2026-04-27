@@ -21,6 +21,16 @@ public class RetrievedChunk {
 
     private Integer chunkIndex;
 
+    private String sectionTitle;
+
+    private String headingPath;
+
+    private String chunkType;
+
+    private Integer charCount;
+
+    private Integer tokenEstimate;
+
     private String text;
 
     private String retrievalSource;
@@ -40,6 +50,8 @@ public class RetrievedChunk {
                 .chunkId(chunkId)
                 .fileName(fileName)
                 .chunkIndex(chunkIndex)
+                .sectionTitle(sectionTitle)
+                .headingPath(headingPath)
                 .snippet(text)
                 .retrievalSource(retrievalSource)
                 .vectorScore(vectorScore)
@@ -64,6 +76,21 @@ public class RetrievedChunk {
         }
         if (this.embeddingId == null) {
             this.embeddingId = other.getEmbeddingId();
+        }
+        if (this.sectionTitle == null) {
+            this.sectionTitle = other.getSectionTitle();
+        }
+        if (this.headingPath == null) {
+            this.headingPath = other.getHeadingPath();
+        }
+        if (this.chunkType == null) {
+            this.chunkType = other.getChunkType();
+        }
+        if (this.charCount == null) {
+            this.charCount = other.getCharCount();
+        }
+        if (this.tokenEstimate == null) {
+            this.tokenEstimate = other.getTokenEstimate();
         }
     }
 }
