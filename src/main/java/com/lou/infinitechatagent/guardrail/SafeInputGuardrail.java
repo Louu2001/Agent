@@ -1,11 +1,10 @@
 package com.lou.infinitechatagent.guardrail;
 
 
+import com.lou.infinitechatagent.guardrail.dto.InputSafetyResult;
 import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.guardrail.InputGuardrail;
 import dev.langchain4j.guardrail.InputGuardrailResult;
-
-import java.util.Set;
 
 /**
  * @ClassName SafeInputGuardrail
@@ -16,20 +15,15 @@ import java.util.Set;
 
 public class SafeInputGuardrail implements InputGuardrail {
 
-
-    private static final Set<String> sensitiveWords = Set.of("死", "杀");
+    private final InputSafetyService inputSafetyService = new InputSafetyService();
 
     @Override
     public InputGuardrailResult validate(UserMessage userMessage) {
-        String inputText = userMessage.singleText();
-
-
-        for (String keyword : sensitiveWords) {
-            if (!keyword.isEmpty() && inputText.contains(keyword)) {
-                return fatal("提问不能包含敏感词！！！！！");
-            }
+        String inputText = userMessage == null ? "" : userMessage.singleText();
+        InputSafetyResult result = inputSafetyService.validate(inputText);
+        if (!Boolean.TRUE.equals(result.getSafe())) {
+            return fatal(result.getReason());
         }
-
         return success();
     }
 }

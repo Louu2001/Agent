@@ -5,6 +5,7 @@ import com.lou.infinitechatagent.agent.dto.AgentTool;
 import com.lou.infinitechatagent.agent.governance.dto.ToolAuditRecord;
 import com.lou.infinitechatagent.agent.governance.dto.ToolGovernanceDecision;
 import com.lou.infinitechatagent.agent.tool.ToolRegistry;
+import com.lou.infinitechatagent.guardrail.InputSafetyService;
 import jakarta.annotation.Resource;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -22,16 +23,6 @@ import java.util.Set;
 @Service
 public class ToolGovernanceService {
 
-    private static final List<String> INJECTION_PATTERNS = List.of(
-            "忽略系统规则",
-            "忽略以上规则",
-            "ignore previous instructions",
-            "ignore all previous instructions",
-            "developer mode",
-            "绕过权限",
-            "不要遵守"
-    );
-
     @Resource
     private ToolRegistry toolRegistry;
 
@@ -46,6 +37,8 @@ public class ToolGovernanceService {
 
     @Value("${agent.tool-governance.prompt-injection-check.enabled:true}")
     private boolean promptInjectionCheckEnabled;
+
+    private final InputSafetyService inputSafetyService = new InputSafetyService();
 
     public ToolGovernanceDecision evaluate(Long userId,
                                            Long sessionId,
@@ -77,7 +70,9 @@ public class ToolGovernanceService {
             return decision;
         }
 
-        List<String> guardrailHits = detectPromptInjection(prompt);
+        List<String> guardrailHits = promptInjectionCheckEnabled
+                ? inputSafetyService.detectPromptInjection(prompt)
+                : List.of();
         if (!guardrailHits.isEmpty()) {
             ToolGovernanceDecision decision = ToolGovernanceDecision.builder()
                     .allowed(false)
@@ -173,20 +168,6 @@ public class ToolGovernanceService {
                 .reason(reason)
                 .guardrailHits(guardrailHits)
                 .build();
-    }
-
-    private List<String> detectPromptInjection(String prompt) {
-        if (!promptInjectionCheckEnabled || !StringUtils.hasText(prompt)) {
-            return List.of();
-        }
-        String normalized = prompt.toLowerCase();
-        List<String> hits = new ArrayList<>();
-        for (String pattern : INJECTION_PATTERNS) {
-            if (normalized.contains(pattern.toLowerCase())) {
-                hits.add("PROMPT_INJECTION:" + pattern);
-            }
-        }
-        return hits;
     }
 
     private void audit(Long userId, Long sessionId, String prompt, ToolGovernanceDecision decision) {
