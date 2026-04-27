@@ -14,8 +14,10 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.LocalDateTime;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 @Service
@@ -25,9 +27,56 @@ public class LongTermMemoryService {
     private JdbcTemplate ragJdbcTemplate;
 
     public MemoryItem write(MemoryWriteRequest request) {
+        return writeWithDedup(request);
+    }
+
+    public MemoryItem writeWithDedup(MemoryWriteRequest request) {
         validateWriteRequest(request);
-        String memoryId = "mem_" + UUID.randomUUID().toString().replace("-", "");
         MemoryType memoryType = request.getMemoryType() == null ? MemoryType.IMPORTANT_FACT : request.getMemoryType();
+        Optional<MemoryItem> similarMemory = findMostSimilarMemory(request.getUserId(), memoryType, request.getContent());
+        if (similarMemory.isPresent()) {
+            return mergeMemory(similarMemory.get(), request);
+        }
+        return insertMemory(request, memoryType);
+    }
+
+    public MemoryItem correct(com.lou.infinitechatagent.memory.dto.MemoryCorrectionRequest request) {
+        if (request == null || request.getUserId() == null) {
+            throw new IllegalArgumentException("userId 不能为空");
+        }
+        if (!StringUtils.hasText(request.getCorrectedContent())) {
+            throw new IllegalArgumentException("correctedContent 不能为空");
+        }
+        MemoryType memoryType = request.getMemoryType() == null ? MemoryType.IMPORTANT_FACT : request.getMemoryType();
+        List<MemoryItem> candidates = findActiveByUser(request.getUserId(), memoryType, 20);
+        candidates.stream()
+                .map(MemoryItem::getMemoryId)
+                .forEach(this::disable);
+
+        MemoryWriteRequest writeRequest = new MemoryWriteRequest();
+        writeRequest.setUserId(request.getUserId());
+        writeRequest.setSessionId(request.getSessionId());
+        writeRequest.setMemoryType(memoryType);
+        writeRequest.setContent(request.getCorrectedContent());
+        writeRequest.setSummary(request.getCorrectedSummary());
+        writeRequest.setConfidence(request.getConfidence() == null ? 0.95 : request.getConfidence());
+        writeRequest.setSource("correction");
+        return insertMemory(writeRequest, memoryType);
+    }
+
+    public List<String> disableActiveByType(Long userId, MemoryType memoryType) {
+        if (userId == null || memoryType == null) {
+            return List.of();
+        }
+        List<String> memoryIds = findActiveByUser(userId, memoryType, 20).stream()
+                .map(MemoryItem::getMemoryId)
+                .toList();
+        memoryIds.forEach(this::disable);
+        return memoryIds;
+    }
+
+    private MemoryItem insertMemory(MemoryWriteRequest request, MemoryType memoryType) {
+        String memoryId = "mem_" + UUID.randomUUID().toString().replace("-", "");
         double confidence = request.getConfidence() == null ? 0.8 : request.getConfidence();
         String source = StringUtils.hasText(request.getSource()) ? request.getSource() : "manual";
         ragJdbcTemplate.update("""
@@ -49,6 +98,51 @@ public class LongTermMemoryService {
                 toTimestamp(request.getExpiresAt()));
         return findByMemoryId(memoryId)
                 .orElseThrow(() -> new IllegalStateException("长期记忆写入失败"));
+    }
+
+    private Optional<MemoryItem> findMostSimilarMemory(Long userId, MemoryType memoryType, String content) {
+        if (userId == null || memoryType == null || !StringUtils.hasText(content)) {
+            return Optional.empty();
+        }
+        return findActiveByUser(userId, memoryType, 20).stream()
+                .map(memory -> new SimilarMemory(memory, similarity(memoryText(memory), content)))
+                .filter(similar -> similar.score() >= 0.72)
+                .max((left, right) -> Double.compare(left.score(), right.score()))
+                .map(SimilarMemory::memory);
+    }
+
+    private MemoryItem mergeMemory(MemoryItem existing, MemoryWriteRequest request) {
+        String mergedContent = mergeText(existing.getContent(), request.getContent());
+        String mergedSummary = StringUtils.hasText(request.getSummary())
+                ? request.getSummary().strip()
+                : existing.getSummary();
+        double mergedConfidence = Math.max(
+                existing.getConfidence() == null ? 0.8 : existing.getConfidence(),
+                request.getConfidence() == null ? 0.8 : request.getConfidence()
+        );
+        String source = StringUtils.hasText(request.getSource())
+                ? "merged:" + request.getSource().strip()
+                : "merged";
+        ragJdbcTemplate.update("""
+                update agent_memory
+                set session_id = coalesce(?, session_id),
+                    content = ?,
+                    summary = ?,
+                    confidence = ?,
+                    source = ?,
+                    expires_at = ?,
+                    updated_at = now()
+                where memory_id = ?
+                """,
+                request.getSessionId(),
+                mergedContent,
+                normalizeBlank(mergedSummary),
+                mergedConfidence,
+                source,
+                toTimestamp(request.getExpiresAt()),
+                existing.getMemoryId());
+        return findByMemoryId(existing.getMemoryId())
+                .orElseThrow(() -> new IllegalStateException("长期记忆合并失败"));
     }
 
     public Optional<MemoryItem> findByMemoryId(String memoryId) {
@@ -144,11 +238,65 @@ public class LongTermMemoryService {
         return StringUtils.hasText(value) ? value.strip() : null;
     }
 
+    private String mergeText(String existing, String incoming) {
+        if (!StringUtils.hasText(existing)) {
+            return incoming == null ? "" : incoming.strip();
+        }
+        if (!StringUtils.hasText(incoming)) {
+            return existing.strip();
+        }
+        String safeExisting = existing.strip();
+        String safeIncoming = incoming.strip();
+        if (safeExisting.contains(safeIncoming)) {
+            return safeExisting;
+        }
+        if (safeIncoming.contains(safeExisting)) {
+            return safeIncoming;
+        }
+        return safeExisting + "\n补充：" + safeIncoming;
+    }
+
+    private String memoryText(MemoryItem memory) {
+        if (memory == null) {
+            return "";
+        }
+        return (StringUtils.hasText(memory.getSummary()) ? memory.getSummary() : memory.getContent());
+    }
+
+    private double similarity(String left, String right) {
+        Set<String> leftTokens = tokenize(left);
+        Set<String> rightTokens = tokenize(right);
+        if (leftTokens.isEmpty() || rightTokens.isEmpty()) {
+            return 0;
+        }
+        Set<String> intersection = new LinkedHashSet<>(leftTokens);
+        intersection.retainAll(rightTokens);
+        Set<String> union = new LinkedHashSet<>(leftTokens);
+        union.addAll(rightTokens);
+        return (double) intersection.size() / union.size();
+    }
+
+    private Set<String> tokenize(String text) {
+        Set<String> tokens = new LinkedHashSet<>();
+        if (!StringUtils.hasText(text)) {
+            return tokens;
+        }
+        for (String token : text.toLowerCase().split("[\\s,，。.!！?？:：;；/\\\\|()（）\\[\\]{}<>《》\"'`+-]+")) {
+            if (token.length() >= 2) {
+                tokens.add(token);
+            }
+        }
+        return tokens;
+    }
+
     private Timestamp toTimestamp(LocalDateTime value) {
         return value == null ? null : Timestamp.valueOf(value);
     }
 
     private LocalDateTime toLocalDateTime(Timestamp timestamp) {
         return timestamp == null ? null : timestamp.toLocalDateTime();
+    }
+
+    private record SimilarMemory(MemoryItem memory, double score) {
     }
 }

@@ -8,6 +8,8 @@ import com.lou.infinitechatagent.memory.SessionSummaryService;
 import com.lou.infinitechatagent.memory.dto.MemoryContext;
 import com.lou.infinitechatagent.memory.dto.MemoryContextRequest;
 import com.lou.infinitechatagent.memory.dto.MemoryAgentRequest;
+import com.lou.infinitechatagent.memory.dto.MemoryCorrectionRequest;
+import com.lou.infinitechatagent.memory.dto.MemoryCorrectionResult;
 import com.lou.infinitechatagent.memory.dto.MemoryItem;
 import com.lou.infinitechatagent.memory.dto.MemoryTrace;
 import com.lou.infinitechatagent.memory.dto.MemoryType;
@@ -77,6 +79,18 @@ public class MemoryController {
     @PostMapping("/write")
     public MemoryItem writeMemory(@RequestBody MemoryWriteRequest request) {
         return longTermMemoryService.write(request);
+    }
+
+    @PostMapping("/correct")
+    public MemoryCorrectionResult correctMemory(@RequestBody MemoryCorrectionRequest request) {
+        MemoryType memoryType = request.getMemoryType() == null ? MemoryType.IMPORTANT_FACT : request.getMemoryType();
+        List<String> disabledMemoryIds = longTermMemoryService.disableActiveByType(request.getUserId(), memoryType);
+        MemoryItem correctedMemory = longTermMemoryService.correct(request);
+        return MemoryCorrectionResult.builder()
+                .correctedMemory(correctedMemory)
+                .disabledMemoryIds(disabledMemoryIds)
+                .reason(request.getReason())
+                .build();
     }
 
     @GetMapping("/user/{userId}")
