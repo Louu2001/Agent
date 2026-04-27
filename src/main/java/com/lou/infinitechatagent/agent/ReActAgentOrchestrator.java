@@ -1,0 +1,246 @@
+package com.lou.infinitechatagent.agent;
+
+import com.lou.infinitechatagent.agent.dto.AgentAction;
+import com.lou.infinitechatagent.agent.dto.AgentActionType;
+import com.lou.infinitechatagent.agent.dto.AgentObservation;
+import com.lou.infinitechatagent.agent.dto.AgentPlan;
+import com.lou.infinitechatagent.agent.dto.AgentRequest;
+import com.lou.infinitechatagent.agent.dto.AgentResponse;
+import com.lou.infinitechatagent.agent.dto.ReActStep;
+import com.lou.infinitechatagent.agent.planner.LlmAgentPlanner;
+import com.lou.infinitechatagent.agent.planner.RuleBasedAgentPlanner;
+import com.lou.infinitechatagent.rag.RagQueryService;
+import com.lou.infinitechatagent.rag.dto.RagQueryResponse;
+import dev.langchain4j.community.store.memory.chat.redis.RedisChatMemoryStore;
+import dev.langchain4j.data.message.AiMessage;
+import dev.langchain4j.data.message.SystemMessage;
+import dev.langchain4j.data.message.UserMessage;
+import dev.langchain4j.memory.chat.MessageWindowChatMemory;
+import dev.langchain4j.model.chat.ChatModel;
+import dev.langchain4j.model.chat.request.ChatRequest;
+import dev.langchain4j.model.chat.response.ChatResponse;
+import jakarta.annotation.Resource;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
+
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
+import java.util.List;
+import java.util.Locale;
+
+@Service
+@Slf4j
+public class ReActAgentOrchestrator {
+
+    @Resource
+    private RagQueryService ragQueryService;
+
+    @Resource
+    private ChatModel chatModel;
+
+    @Resource
+    private RedisChatMemoryStore redisChatMemoryStore;
+
+    @Resource
+    private RuleBasedAgentPlanner ruleBasedAgentPlanner;
+
+    @Resource
+    private LlmAgentPlanner llmAgentPlanner;
+
+    @Value("${agent.react.max-output-tokens:500}")
+    private int maxOutputTokens;
+
+    @Value("${agent.react.memory-max-messages:20}")
+    private int memoryMaxMessages;
+
+    @Value("${agent.react.planner.mode:RULE_BASED}")
+    private String plannerMode;
+
+    public AgentResponse chat(AgentRequest request) {
+        long start = System.currentTimeMillis();
+        String prompt = normalizePrompt(request.getPrompt());
+        AgentPlan plan = plan(prompt);
+        AgentAction action = plan.getAction();
+
+        return switch (action.getType()) {
+            case HYBRID_SEARCH -> answerWithRag(request.getSessionId(), prompt, plan, start);
+            case CURRENT_TIME -> answerWithCurrentTime(request.getSessionId(), prompt, plan, start);
+            case NO_RETRIEVAL_ANSWER -> answerDirectly(request.getSessionId(), prompt, plan, start);
+            default -> answerDirectly(request.getSessionId(), prompt, plan, start);
+        };
+    }
+
+    private AgentPlan plan(String prompt) {
+        if ("LLM".equalsIgnoreCase(plannerMode)) {
+            return llmAgentPlanner.plan(prompt);
+        }
+        return ruleBasedAgentPlanner.plan(prompt);
+    }
+
+    private AgentResponse answerWithRag(Long sessionId, String prompt, AgentPlan plan, long start) {
+        long actionStart = System.currentTimeMillis();
+        RagQueryResponse ragResponse = ragQueryService.chatWithCitations(sessionId, prompt);
+        ReActStep step = ReActStep.builder()
+                .step(1)
+                .thought(plan.getThought())
+                .needRetrieval(plan.getNeedRetrieval())
+                .actionReason(plan.getActionReason())
+                .confidence(plan.getConfidence())
+                .action(plan.getAction())
+                .observation(AgentObservation.builder()
+                        .success(Boolean.TRUE.equals(ragResponse.getHit()))
+                        .summary(String.format("hybrid search retrieved=%s, candidates=%s, citations=%s",
+                                ragResponse.getRetrievedCount(),
+                                ragResponse.getCandidateCount(),
+                                ragResponse.getCitations() == null ? 0 : ragResponse.getCitations().size()))
+                        .citationCount(ragResponse.getCitations() == null ? 0 : ragResponse.getCitations().size())
+                        .costMs(System.currentTimeMillis() - actionStart)
+                        .build())
+                .build();
+
+        log.info("ReAct Agent | planner={} | action={} | confidence={} | hit={} | citations={}",
+                plan.getPlannerType(),
+                plan.getAction().getType(),
+                plan.getConfidence(),
+                ragResponse.getHit(),
+                ragResponse.getCitations() == null ? 0 : ragResponse.getCitations().size());
+
+        return AgentResponse.builder()
+                .answer(ragResponse.getAnswer())
+                .finalAction(AgentActionType.FINAL_ANSWER)
+                .strategy("REACT_HYBRID_RAG")
+                .citations(ragResponse.getCitations())
+                .reactTrace(List.of(step))
+                .costMs(System.currentTimeMillis() - start)
+                .modelCostMs(ragResponse.getModelCostMs())
+                .retrievalCostMs(ragResponse.getRetrievalCostMs())
+                .estimatedInputTokens(ragResponse.getEstimatedInputTokens())
+                .contextTruncated(ragResponse.getContextTruncated())
+                .build();
+    }
+
+    private AgentResponse answerWithCurrentTime(Long sessionId, String prompt, AgentPlan plan, long start) {
+        LocalDateTime now = LocalDateTime.now(ZoneId.of("Asia/Shanghai"));
+        String answer = """
+                回答：
+                当前上海时间是 %s。
+
+                引用：
+                无
+                """.formatted(now.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss EEEE", Locale.CHINA)));
+        saveMemory(sessionId, prompt, answer);
+
+        ReActStep step = ReActStep.builder()
+                .step(1)
+                .thought(plan.getThought())
+                .needRetrieval(plan.getNeedRetrieval())
+                .actionReason(plan.getActionReason())
+                .confidence(plan.getConfidence())
+                .action(plan.getAction())
+                .observation(AgentObservation.builder()
+                        .success(true)
+                        .summary("system clock returned Asia/Shanghai current time")
+                        .citationCount(0)
+                        .costMs(System.currentTimeMillis() - start)
+                        .build())
+                .build();
+
+        return AgentResponse.builder()
+                .answer(answer)
+                .finalAction(AgentActionType.FINAL_ANSWER)
+                .strategy("REACT_TOOL")
+                .citations(List.of())
+                .reactTrace(List.of(step))
+                .costMs(System.currentTimeMillis() - start)
+                .modelCostMs(0L)
+                .retrievalCostMs(0L)
+                .estimatedInputTokens(0)
+                .contextTruncated(false)
+                .build();
+    }
+
+    private AgentResponse answerDirectly(Long sessionId, String prompt, AgentPlan plan, long start) {
+        long modelStart = System.currentTimeMillis();
+        ChatResponse response = chatModel.chat(ChatRequest.builder()
+                .messages(
+                        SystemMessage.from("""
+                                你是千言 Agent。对于闲聊、常识性问题或不需要企业知识库的问题，直接简洁回答。
+                                输出必须使用固定格式：
+                                回答：
+                                xxx
+
+                                引用：
+                                无
+                                """),
+                        UserMessage.from(prompt)
+                )
+                .maxOutputTokens(maxOutputTokens)
+                .build());
+        long modelCostMs = System.currentTimeMillis() - modelStart;
+        String answer = ensureDirectAnswerFormat(response.aiMessage().text());
+        saveMemory(sessionId, prompt, answer);
+
+        ReActStep step = ReActStep.builder()
+                .step(1)
+                .thought(plan.getThought())
+                .needRetrieval(plan.getNeedRetrieval())
+                .actionReason(plan.getActionReason())
+                .confidence(plan.getConfidence())
+                .action(plan.getAction())
+                .observation(AgentObservation.builder()
+                        .success(true)
+                        .summary("answered without retrieval or tool call")
+                        .citationCount(0)
+                        .costMs(modelCostMs)
+                        .build())
+                .build();
+
+        return AgentResponse.builder()
+                .answer(answer)
+                .finalAction(AgentActionType.FINAL_ANSWER)
+                .strategy("REACT_DIRECT")
+                .citations(List.of())
+                .reactTrace(List.of(step))
+                .costMs(System.currentTimeMillis() - start)
+                .modelCostMs(modelCostMs)
+                .retrievalCostMs(0L)
+                .estimatedInputTokens(estimateTokens(prompt))
+                .contextTruncated(false)
+                .build();
+    }
+
+    private String normalizePrompt(String prompt) {
+        return prompt == null ? "" : prompt.trim();
+    }
+
+    private String ensureDirectAnswerFormat(String answer) {
+        if (answer == null || answer.isBlank()) {
+            return "回答：\n我暂时没有生成有效回答。\n\n引用：\n无";
+        }
+        boolean hasAnswer = answer.contains("回答：");
+        boolean hasCitation = answer.contains("引用：");
+        if (hasAnswer && hasCitation) {
+            return answer;
+        }
+        return "回答：\n" + answer.strip() + "\n\n引用：\n无";
+    }
+
+    private int estimateTokens(String text) {
+        if (text == null || text.isBlank()) {
+            return 0;
+        }
+        return (int) Math.ceil(text.length() / 2.0);
+    }
+
+    private void saveMemory(Long sessionId, String prompt, String answer) {
+        MessageWindowChatMemory chatMemory = MessageWindowChatMemory.builder()
+                .id(sessionId == null ? "agent-default-session" : sessionId)
+                .chatMemoryStore(redisChatMemoryStore)
+                .maxMessages(memoryMaxMessages)
+                .build();
+        chatMemory.add(UserMessage.from(prompt));
+        chatMemory.add(AiMessage.from(answer));
+    }
+}

@@ -35,3 +35,4 @@ build/
 ### Local secrets ###
 src/main/resources/application-local.yml
 src/main/resources/application-*.local.yml
+src/main/resources/docs/RuntimeKnowledge.md

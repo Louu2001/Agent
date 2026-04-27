@@ -79,6 +79,14 @@ rag:
     min-chunk-chars: 180
     chars-per-token: 2.0
 
+agent:
+  react:
+    max-output-tokens: 500
+    memory-max-messages: 20
+    planner:
+      mode: ${AGENT_REACT_PLANNER_MODE:LLM}
+      max-output-tokens: 300
+
 management:
   endpoints:
     web:
