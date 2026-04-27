@@ -3,8 +3,12 @@ package com.lou.infinitechatagent.rag;
 import com.lou.infinitechatagent.rag.dto.Citation;
 import com.lou.infinitechatagent.rag.dto.RagQueryResponse;
 import com.lou.infinitechatagent.rag.dto.RetrievedChunk;
+import dev.langchain4j.community.store.memory.chat.redis.RedisChatMemoryStore;
+import dev.langchain4j.data.message.AiMessage;
+import dev.langchain4j.data.message.ChatMessage;
 import dev.langchain4j.data.message.SystemMessage;
 import dev.langchain4j.data.message.UserMessage;
+import dev.langchain4j.memory.chat.MessageWindowChatMemory;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.request.ChatRequest;
 import dev.langchain4j.model.chat.response.ChatResponse;
@@ -32,6 +36,9 @@ public class RagQueryService {
     @Resource
     private HybridSearchService hybridSearchService;
 
+    @Resource
+    private RedisChatMemoryStore redisChatMemoryStore;
+
     @Value("${rag.rerank.enabled:true}")
     private boolean rerankEnabled;
 
@@ -53,8 +60,10 @@ public class RagQueryService {
     @Value("${rag.token.chars-per-token:2.0}")
     private double charsPerToken;
 
-    public RagQueryResponse chatWithCitations(String prompt) {
+    public RagQueryResponse chatWithCitations(Long sessionId, String prompt) {
         long start = System.currentTimeMillis();
+        MessageWindowChatMemory chatMemory = buildChatMemory(sessionId);
+        List<ChatMessage> historyMessages = chatMemory.messages();
         long retrievalStart = System.currentTimeMillis();
         List<RetrievedChunk> candidates = hybridSearchService.search(prompt);
         List<RetrievedChunk> chunks = rerankEnabled
@@ -66,6 +75,8 @@ public class RagQueryService {
         log.info("RAG Rerank | enabled={} | before={} | after={}", rerankEnabled, candidates.size(), chunks.size());
 
         if (budgetedChunks.isEmpty()) {
+            chatMemory.add(UserMessage.from(prompt));
+            chatMemory.add(AiMessage.from(MISS_ANSWER));
             return RagQueryResponse.builder()
                     .answer(MISS_ANSWER)
                     .citations(List.of())
@@ -82,7 +93,7 @@ public class RagQueryService {
                     .build();
         }
 
-        String userPrompt = buildUserPrompt(prompt, budgetedChunks);
+        String userPrompt = buildUserPrompt(prompt, budgetedChunks, historyMessages);
         long modelStart = System.currentTimeMillis();
         ChatResponse response = chatModel.chat(ChatRequest.builder()
                 .messages(
@@ -98,6 +109,8 @@ public class RagQueryService {
                 .toList();
 
         String answer = ensureCitationSection(response.aiMessage().text(), citations);
+        chatMemory.add(UserMessage.from(prompt));
+        chatMemory.add(AiMessage.from(answer));
         return RagQueryResponse.builder()
                 .answer(answer)
                 .citations(citations)
@@ -196,7 +209,17 @@ public class RagQueryService {
                 """;
     }
 
-    private String buildUserPrompt(String prompt, List<RetrievedChunk> chunks) {
+    private MessageWindowChatMemory buildChatMemory(Long sessionId) {
+        Object memoryId = sessionId == null ? "rag-default-session" : sessionId;
+        return MessageWindowChatMemory.builder()
+                .id(memoryId)
+                .chatMemoryStore(redisChatMemoryStore)
+                .maxMessages(20)
+                .build();
+    }
+
+    private String buildUserPrompt(String prompt, List<RetrievedChunk> chunks, List<ChatMessage> historyMessages) {
+        String history = buildHistory(historyMessages);
         String context = IntStream.range(0, chunks.size())
                 .mapToObj(index -> {
                     RetrievedChunk chunk = chunks.get(index);
@@ -224,6 +247,9 @@ public class RagQueryService {
                 .reduce("", (left, right) -> left + "\n" + right);
 
         return String.format("""
+                历史对话：
+                %s
+
                 用户问题：
                 %s
 
@@ -238,7 +264,28 @@ public class RagQueryService {
                 引用：
                 [1] 文件名 第x段
                 [2] 文件名 第y段
-                """, prompt, context);
+                """, history, prompt, context);
+    }
+
+    private String buildHistory(List<ChatMessage> historyMessages) {
+        if (historyMessages == null || historyMessages.isEmpty()) {
+            return "无";
+        }
+        return historyMessages.stream()
+                .map(this::formatHistoryMessage)
+                .filter(text -> text != null && !text.isBlank())
+                .reduce("", (left, right) -> left + "\n" + right)
+                .trim();
+    }
+
+    private String formatHistoryMessage(ChatMessage message) {
+        if (message instanceof UserMessage userMessage) {
+            return "用户：" + userMessage.singleText();
+        }
+        if (message instanceof AiMessage aiMessage) {
+            return "助手：" + aiMessage.text();
+        }
+        return null;
     }
 
     private String ensureCitationSection(String answer, List<Citation> citations) {

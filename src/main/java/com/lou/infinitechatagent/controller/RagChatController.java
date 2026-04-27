@@ -25,7 +25,7 @@ public class RagChatController {
                 .sessionId(chatRequest.getSessionId())
                 .build());
         try {
-            return ragQueryService.chatWithCitations(chatRequest.getPrompt());
+            return ragQueryService.chatWithCitations(chatRequest.getSessionId(), chatRequest.getPrompt());
         } finally {
             MonitorContextHolder.clearContext();
         }
