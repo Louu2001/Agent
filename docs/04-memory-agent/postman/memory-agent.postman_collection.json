@@ -1,0 +1,611 @@
+{
+  "info": {
+    "name": "InfiniteChat Agent - Memory Agent 完整接口测试",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:10010/api"
+    },
+    {
+      "key": "memoryId",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "01 ReAct 对话 - 积累短期 Redis 记忆",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/agent/chat",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "agent",
+            "chat"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": 1001,\n  \"sessionId\": 93001,\n  \"prompt\": \"我正在开发 InfiniteChat-Agent 项目，已经完成 ReAct、Adaptive RAG 和 Memory Agent。\"\n}"
+        }
+      }
+    },
+    {
+      "name": "02 ReAct 对话 - 继续积累短期记忆",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/agent/chat",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "agent",
+            "chat"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": 1001,\n  \"sessionId\": 93001,\n  \"prompt\": \"下一步我想完善工具治理和多模态报错截图分析。\"\n}"
+        }
+      }
+    },
+    {
+      "name": "03 手动生成 Session Summary",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/memory/session/summarize",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "memory",
+            "session",
+            "summarize"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": 1001,\n  \"sessionId\": 93001\n}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Session Summary 已生成', function () {",
+              "  const json = pm.response.json();",
+              "  pm.expect(json.summary).to.be.a('string').that.is.not.empty;",
+              "  pm.expect(json.turnCount).to.be.a('number');",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "04 查询 Session Summary",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/memory/session/summary?userId=1001&sessionId=93001",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "memory",
+            "session",
+            "summary"
+          ],
+          "query": [
+            {
+              "key": "userId",
+              "value": "1001"
+            },
+            {
+              "key": "sessionId",
+              "value": "93001"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "05 写入长期记忆 - TECH_STACK",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/memory/write",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "memory",
+            "write"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": 1001,\n  \"sessionId\": 93001,\n  \"memoryType\": \"TECH_STACK\",\n  \"content\": \"用户的 Agent 项目核心技术栈是 Spring Boot 3、Java 17、LangChain4j、Redis、MySQL、Qwen、Prometheus 和 Grafana。\",\n  \"summary\": \"Agent 项目技术栈：Spring Boot 3、Java 17、LangChain4j、Redis、MySQL、Qwen、Prometheus、Grafana。\",\n  \"confidence\": 0.95,\n  \"source\": \"manual\"\n}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('长期记忆写入成功', function () {",
+              "  const json = pm.response.json();",
+              "  pm.expect(json.memoryId).to.be.a('string').that.is.not.empty;",
+              "  pm.collectionVariables.set('memoryId', json.memoryId);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "06 写入长期记忆 - PROJECT_CONTEXT",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/memory/write",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "memory",
+            "write"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": 1001,\n  \"sessionId\": 93001,\n  \"memoryType\": \"PROJECT_CONTEXT\",\n  \"content\": \"用户正在开发 InfiniteChat-Agent，一个基于 Java 和 LangChain4j 的企业级 Agent 系统，重点能力包括 ReAct、Adaptive RAG、Memory Agent 和工具调用。\",\n  \"summary\": \"项目背景：Java + LangChain4j 企业级 Agent，包含 ReAct、Adaptive RAG、Memory Agent 和工具调用。\",\n  \"confidence\": 0.94,\n  \"source\": \"manual\"\n}"
+        }
+      }
+    },
+    {
+      "name": "07 写入长期记忆 - OUTPUT_STYLE",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/memory/write",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "memory",
+            "write"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": 1001,\n  \"sessionId\": 93001,\n  \"memoryType\": \"OUTPUT_STYLE\",\n  \"content\": \"用户希望项目优化时优先给出技术路线文档、Postman 接口、实现细节和可写入简历的工程化表达。\",\n  \"summary\": \"输出偏好：技术路线文档 + Postman 接口 + 实现细节 + 简历表达。\",\n  \"confidence\": 0.9,\n  \"source\": \"manual\"\n}"
+        }
+      }
+    },
+    {
+      "name": "08 查询用户全部长期记忆",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/memory/user/1001?limit=10",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "memory",
+            "user",
+            "1001"
+          ],
+          "query": [
+            {
+              "key": "limit",
+              "value": "10"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "09 按类型查询 TECH_STACK",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/memory/user/1001?memoryType=TECH_STACK&limit=5",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "memory",
+            "user",
+            "1001"
+          ],
+          "query": [
+            {
+              "key": "memoryType",
+              "value": "TECH_STACK"
+            },
+            {
+              "key": "limit",
+              "value": "5"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "10 查询单条长期记忆",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/memory/item/{{memoryId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "memory",
+            "item",
+            "{{memoryId}}"
+          ]
+        }
+      }
+    },
+    {
+      "name": "11 POST 构建 Memory Context - 技术栈问题",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/memory/context",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "memory",
+            "context"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": 1001,\n  \"sessionId\": 93001,\n  \"prompt\": \"请概括我的 Agent 项目技术栈\"\n}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Memory Context 返回注入信息', function () {",
+              "  const json = pm.response.json();",
+              "  pm.expect(json).to.have.property('usedMemoryCount');",
+              "  pm.expect(json).to.have.property('estimatedMemoryTokens');",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "12 GET 构建 Memory Context",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/memory/context?userId=1001&sessionId=93001&prompt=请按我喜欢的格式输出技术路线",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "memory",
+            "context"
+          ],
+          "query": [
+            {
+              "key": "userId",
+              "value": "1001"
+            },
+            {
+              "key": "sessionId",
+              "value": "93001"
+            },
+            {
+              "key": "prompt",
+              "value": "请按我喜欢的格式输出技术路线"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "13 MemoryAgent 决策与上下文",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/memory/agent/context",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "memory",
+            "agent",
+            "context"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": 1001,\n  \"sessionId\": 93001,\n  \"prompt\": \"继续优化我的 Agent 项目 Memory 部分\"\n}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('MemoryAgent 返回 decision 和 context', function () {",
+              "  const json = pm.response.json();",
+              "  pm.expect(json).to.have.property('decision');",
+              "  pm.expect(json).to.have.property('context');",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "14 手动写入用户纠正反思",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/memory/reflection",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "memory",
+            "reflection"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": 1001,\n  \"sessionId\": 93001,\n  \"trigger\": \"USER_CORRECTION\",\n  \"prompt\": \"纠正一下，我的 Agent 项目数据库现在主要是 MySQL，不是 PostgreSQL。\",\n  \"reason\": \"用户纠正项目技术栈信息\",\n  \"confidence\": 0.92\n}"
+        }
+      }
+    },
+    {
+      "name": "15 查询 REFLECTION 记忆",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/memory/user/1001?memoryType=REFLECTION&limit=10",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "memory",
+            "user",
+            "1001"
+          ],
+          "query": [
+            {
+              "key": "memoryType",
+              "value": "REFLECTION"
+            },
+            {
+              "key": "limit",
+              "value": "10"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "16 ReAct Agent 验证记忆参与回答",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/agent/chat",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "agent",
+            "chat"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": 1001,\n  \"sessionId\": 93001,\n  \"prompt\": \"我现在 Memory Agent 阶段做到哪一步了？\"\n}"
+        }
+      }
+    },
+    {
+      "name": "17 Adaptive RAG Debug 查看 memoryTrace",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/rag/adaptive/chat",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "rag",
+            "adaptive",
+            "chat"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": 1001,\n  \"sessionId\": 93001,\n  \"prompt\": \"请根据记忆说明我当前 Agent 项目的优化重点。\",\n  \"debug\": true\n}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Adaptive RAG debug 返回 memoryTrace', function () {",
+              "  const json = pm.response.json();",
+              "  pm.expect(json.debug).to.have.property('memoryTrace');",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "18 Adaptive RAG 失败自动写入反思",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/rag/adaptive/chat",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "rag",
+            "adaptive",
+            "chat"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": 1001,\n  \"sessionId\": 93001,\n  \"prompt\": \"请根据知识库回答不存在的内部错误码 MEM-9999 的处理方案。\",\n  \"debug\": true\n}"
+        }
+      }
+    },
+    {
+      "name": "19 再次查询 REFLECTION 记忆",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/memory/user/1001?memoryType=REFLECTION&limit=20",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "memory",
+            "user",
+            "1001"
+          ],
+          "query": [
+            {
+              "key": "memoryType",
+              "value": "REFLECTION"
+            },
+            {
+              "key": "limit",
+              "value": "20"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "20 禁用一条长期记忆",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/memory/disable/{{memoryId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "memory",
+            "disable",
+            "{{memoryId}}"
+          ]
+        }
+      }
+    }
+  ]
+}

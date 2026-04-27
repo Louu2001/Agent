@@ -1,0 +1,235 @@
+{
+  "info": {
+    "name": "InfiniteChat-Agent Hybrid RAG + Rerank 测试接口",
+    "description": "用于验证混合检索、RRF 融合、RuleBasedRerank、引用溯源和 cost-aware RAG 指标。默认服务地址：http://localhost:10010/api",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:10010/api",
+      "type": "string"
+    },
+    {
+      "key": "userId",
+      "value": "1",
+      "type": "string"
+    },
+    {
+      "key": "sessionId",
+      "value": "20001",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "1. 健康检查",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/actuator/health",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "actuator",
+            "health"
+          ]
+        }
+      }
+    },
+    {
+      "name": "2. 错误码关键词命中 - RAG-409",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": {{userId}},\n  \"sessionId\": {{sessionId}},\n  \"prompt\": \"RAG-409 是什么错误？常见原因和处理建议是什么？\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/rag/chat",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "rag",
+            "chat"
+          ]
+        },
+        "description": "验证错误码类关键词是否稳定命中。响应 citations 中应包含 retrievalSource、fusionScore、rerankScore。"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('状态码 200', function () { pm.response.to.have.status(200); });",
+              "pm.test('返回引用和 Rerank 分数', function () {",
+              "  const json = pm.response.json();",
+              "  pm.expect(json.citations.length).to.be.greaterThan(0);",
+              "  const c = json.citations[0];",
+              "  pm.expect(c).to.have.property('retrievalSource');",
+              "  pm.expect(c).to.have.property('fusionScore');",
+              "  pm.expect(c).to.have.property('rerankScore');",
+              "});",
+              "pm.test('返回 cost-aware 指标', function () {",
+              "  const json = pm.response.json();",
+              "  pm.expect(json).to.have.property('candidateCount');",
+              "  pm.expect(json).to.have.property('estimatedInputTokens');",
+              "  pm.expect(json).to.have.property('contextTruncated');",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. 配置项关键词命中 - heartbeat interval",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": {{userId}},\n  \"sessionId\": {{sessionId}},\n  \"prompt\": \"im.gateway.heartbeat-interval-seconds 默认是多少？长连接网关如何判断用户掉线？\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/rag/chat",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "rag",
+            "chat"
+          ]
+        },
+        "description": "验证配置项类问题是否能通过 keyword/hybrid 召回。"
+      }
+    },
+    {
+      "name": "4. 类名方法名关键词命中 - RagTool.addKnowledgeToRag",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": {{userId}},\n  \"sessionId\": {{sessionId}},\n  \"prompt\": \"RagTool.addKnowledgeToRag 的作用是什么？\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/rag/chat",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "rag",
+            "chat"
+          ]
+        },
+        "description": "验证类名/方法名这类向量检索不稳定的关键词问题。"
+      }
+    },
+    {
+      "name": "5. 相似概念 Rerank - Redis 记忆 vs RAG 知识库",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": {{userId}},\n  \"sessionId\": {{sessionId}},\n  \"prompt\": \"Redis 会话记忆和 RAG 知识库有什么区别？\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/rag/chat",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "rag",
+            "chat"
+          ]
+        },
+        "description": "验证相似概念问题是否通过 rerank 选出更相关片段。"
+      }
+    },
+    {
+      "name": "6. 输出格式验证 - 回答 + 引用",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": {{userId}},\n  \"sessionId\": {{sessionId}},\n  \"prompt\": \"请说明动态知识植入流程，并按要求给出引用。\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/rag/chat",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "rag",
+            "chat"
+          ]
+        },
+        "description": "验证 answer 是否按“回答：/引用：”格式输出。"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('answer 包含回答与引用区块', function () {",
+              "  const answer = pm.response.json().answer;",
+              "  pm.expect(answer).to.include('回答：');",
+              "  pm.expect(answer).to.include('引用：');",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ]
+    },
+    {
+      "name": "7. 监控日志辅助 - Prometheus 指标",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/actuator/prometheus",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "actuator",
+            "prometheus"
+          ]
+        }
+      }
+    }
+  ]
+}

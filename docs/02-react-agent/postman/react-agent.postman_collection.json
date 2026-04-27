@@ -1,0 +1,235 @@
+{
+  "info": {
+    "name": "InfiniteChat Agent - ReAct 推理循环测试",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:10010/api"
+    }
+  ],
+  "item": [
+    {
+      "name": "00 Tool Registry - 查看已注册工具",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/agent/tools",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "agent",
+            "tools"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('返回工具注册表', function () {",
+              "  const json = pm.response.json();",
+              "  pm.expect(json).to.be.an('array').that.is.not.empty;",
+              "});",
+              "pm.test('包含 hybrid_search 工具', function () {",
+              "  const tools = pm.response.json().map(item => item.name);",
+              "  pm.expect(tools).to.include('hybrid_search');",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "01 ReAct 直接回答 - 不检索",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/agent/chat",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "agent",
+            "chat"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": 1001,\n  \"sessionId\": 91001,\n  \"prompt\": \"你好，帮我把这句话润色一下：系统已经完成升级。\"\n}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('返回工程化 ReAct trace', function () {",
+              "  const json = pm.response.json();",
+              "  pm.expect(json.reactTrace).to.be.an('array').that.is.not.empty;",
+              "  pm.expect(json.reactTrace[0]).to.have.property('needRetrieval');",
+              "  pm.expect(json.reactTrace[0]).to.have.property('actionReason');",
+              "  pm.expect(json.reactTrace[0]).to.have.property('confidence');",
+              "});",
+              "pm.test('策略为直接回答', function () {",
+              "  const json = pm.response.json();",
+              "  pm.expect(json.strategy).to.eql('REACT_DIRECT');",
+              "  pm.expect(json.reactTrace[0].needRetrieval).to.eql(false);",
+              "  pm.expect(json.reactTrace[0].action.toolName).to.eql('direct_answer');",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "02 ReAct 工具调用 - 当前时间",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/agent/chat",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "agent",
+            "chat"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": 1001,\n  \"sessionId\": 91002,\n  \"prompt\": \"现在几点？\"\n}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('策略为工具调用', function () {",
+              "  const json = pm.response.json();",
+              "  pm.expect(json.strategy).to.eql('REACT_TOOL');",
+              "});",
+              "pm.test('action 为 CURRENT_TIME 且 toolName 正确', function () {",
+              "  const json = pm.response.json();",
+              "  pm.expect(json.reactTrace[0].action.type).to.eql('CURRENT_TIME');",
+              "  pm.expect(json.reactTrace[0].action.toolName).to.eql('current_time');",
+              "  pm.expect(json.reactTrace[0].needRetrieval).to.eql(false);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "03 ReAct 知识库检索 - 错误码",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/agent/chat",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "agent",
+            "chat"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": 1001,\n  \"sessionId\": 91003,\n  \"prompt\": \"ORDER-409 是什么原因？请给出引用。\"\n}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('策略为 ReAct Hybrid RAG', function () {",
+              "  const json = pm.response.json();",
+              "  pm.expect(json.strategy).to.eql('REACT_HYBRID_RAG');",
+              "});",
+              "pm.test('触发检索且返回引用', function () {",
+              "  const json = pm.response.json();",
+              "  pm.expect(json.reactTrace[0].needRetrieval).to.eql(true);",
+              "  pm.expect(json.reactTrace[0].action.toolName).to.eql('hybrid_search');",
+              "  pm.expect(json.citations).to.be.an('array').that.is.not.empty;",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "04 ReAct 知识库检索 - 配置项",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/agent/chat",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "agent",
+            "chat"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": 1001,\n  \"sessionId\": 91004,\n  \"prompt\": \"warehouse.retry.interval-seconds 有什么作用？\"\n}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('触发 HYBRID_SEARCH', function () {",
+              "  const json = pm.response.json();",
+              "  pm.expect(json.reactTrace[0].action.type).to.eql('HYBRID_SEARCH');",
+              "  pm.expect(json.reactTrace[0].confidence).to.be.a('number');",
+              "});",
+              "pm.test('trace 包含动作原因', function () {",
+              "  const json = pm.response.json();",
+              "  pm.expect(json.reactTrace[0].actionReason).to.be.a('string').that.is.not.empty;",
+              "});"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

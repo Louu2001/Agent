@@ -1,0 +1,374 @@
+{
+  "info": {
+    "name": "InfiniteChat Agent - Adaptive RAG 测试",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:10010/api"
+    }
+  ],
+  "item": [
+    {
+      "name": "01 Adaptive RAG - 错误码关键词检索",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/rag/adaptive/chat",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "rag",
+            "adaptive",
+            "chat"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": 1001,\n  \"sessionId\": 92001,\n  \"prompt\": \"ORDER-409 是什么原因？请给出引用。\",\n  \"debug\": true\n}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('返回 adaptive trace', function () {",
+              "  const json = pm.response.json();",
+              "  pm.expect(json.debug.adaptiveTrace).to.be.an('array').that.is.not.empty;",
+              "  pm.expect(json.debug).to.have.property('evidenceEvaluation');",
+              "});",
+              "pm.test('错误码问题优先关键词检索', function () {",
+              "  const json = pm.response.json();",
+              "  pm.expect(json.debug.retrievalPlan.strategy).to.eql('KEYWORD');",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "02 Adaptive RAG - 配置项关键词检索",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/rag/adaptive/chat",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "rag",
+            "adaptive",
+            "chat"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": 1001,\n  \"sessionId\": 92002,\n  \"prompt\": \"warehouse.retry.interval-seconds 有什么作用？\",\n  \"debug\": true\n}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('配置项问题走 KEYWORD', function () {",
+              "  const json = pm.response.json();",
+              "  pm.expect(json.debug.retrievalPlan.strategy).to.eql('KEYWORD');",
+              "});",
+              "pm.test('trace 包含候选数量', function () {",
+              "  const json = pm.response.json();",
+              "  pm.expect(json.debug.adaptiveTrace[0]).to.have.property('candidateCount');",
+              "  pm.expect(json.debug.adaptiveTrace[0]).to.have.property('topScore');",
+              "  pm.expect(json.debug.adaptiveTrace[0]).to.have.property('coverageScore');",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "03 Adaptive RAG - 语义类向量检索",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/rag/adaptive/chat",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "rag",
+            "adaptive",
+            "chat"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": 1001,\n  \"sessionId\": 92003,\n  \"prompt\": \"为什么 RAG 回答需要引用来源？\",\n  \"debug\": true\n}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('语义类问题走 VECTOR', function () {",
+              "  const json = pm.response.json();",
+              "  pm.expect(json.debug.retrievalPlan.strategy).to.eql('VECTOR');",
+              "  pm.expect(json.debug.evidenceEvaluation).to.have.property('sufficient');",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "04 Adaptive RAG - 模糊错误追问",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/rag/adaptive/chat",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "rag",
+            "adaptive",
+            "chat"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": 1001,\n  \"sessionId\": 92004,\n  \"prompt\": \"这个错误怎么处理？\",\n  \"debug\": true\n}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('模糊问题要求补充信息', function () {",
+              "  const json = pm.response.json();",
+              "  pm.expect(json.debug.retrievalPlan.strategy).to.eql('FOLLOW_UP_REQUIRED');",
+              "  pm.expect(json.hit).to.eql(false);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "05 Adaptive RAG - 普通问题不检索",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/rag/adaptive/chat",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "rag",
+            "adaptive",
+            "chat"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": 1001,\n  \"sessionId\": 92005,\n  \"prompt\": \"你好，帮我润色一句话：系统已经完成升级。\",\n  \"debug\": true\n}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('普通问题不检索', function () {",
+              "  const json = pm.response.json();",
+              "  pm.expect(json.debug.retrievalPlan.strategy).to.eql('NO_RETRIEVAL');",
+              "  pm.expect(json.debug.adaptiveTrace[0].candidateCount).to.eql(0);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "06 Adaptive RAG - debug=false 隐藏调试字段",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/rag/adaptive/chat",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "rag",
+            "adaptive",
+            "chat"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": 1001,\n  \"sessionId\": 92006,\n  \"prompt\": \"你好，帮我润色一句话：系统已经完成升级。\",\n  \"debug\": false\n}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('debug=false 不返回 debug 字段', function () {",
+              "  const json = pm.response.json();",
+              "  pm.expect(json).to.have.property('answer');",
+              "  pm.expect(json).to.have.property('citations');",
+              "  pm.expect(json).to.have.property('hit');",
+              "  pm.expect(json).to.have.property('strategy');",
+              "  pm.expect(json).to.have.property('rounds');",
+              "  pm.expect(json).to.not.have.property('debug');",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "07 Adaptive RAG - Query Rewrite 多轮检索",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/rag/adaptive/chat",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "rag",
+            "adaptive",
+            "chat"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": 1001,\n  \"sessionId\": 92007,\n  \"prompt\": \"ORDER-504 怎么处理？\",\n  \"debug\": true\n}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('返回 query rewrite 调试字段', function () {",
+              "  const json = pm.response.json();",
+              "  pm.expect(json.debug).to.have.property('queryRewrites');",
+              "  pm.expect(json.debug.adaptiveTrace).to.be.an('array').that.is.not.empty;",
+              "});",
+              "pm.test('rounds 为实际检索轮数', function () {",
+              "  const json = pm.response.json();",
+              "  pm.expect(json.rounds).to.be.a('number');",
+              "  pm.expect(json.rounds).to.eql(json.debug.adaptiveTrace.length);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "08 Adaptive RAG - LLM Retrieval Planner 模式",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/rag/adaptive/chat",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "rag",
+            "adaptive",
+            "chat"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": 1001,\n  \"sessionId\": 92008,\n  \"prompt\": \"ORDER-504 怎么处理？\",\n  \"debug\": true\n}"
+        },
+        "description": "启动服务前设置 RAG_ADAPTIVE_PLANNER_MODE=LLM，用于测试 LLM Retrieval Planner。"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('返回 retrievalPlan', function () {",
+              "  const json = pm.response.json();",
+              "  pm.expect(json.debug).to.have.property('retrievalPlan');",
+              "  pm.expect(json.debug.retrievalPlan.query).to.be.a('string').that.is.not.empty;",
+              "});",
+              "pm.test('strategy 属于允许枚举', function () {",
+              "  const json = pm.response.json();",
+              "  const allowed = ['NO_RETRIEVAL', 'FOLLOW_UP_REQUIRED', 'VECTOR', 'KEYWORD', 'HYBRID'];",
+              "  pm.expect(allowed).to.include(json.debug.retrievalPlan.strategy);",
+              "});"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

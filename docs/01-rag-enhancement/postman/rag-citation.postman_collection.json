@@ -1,0 +1,336 @@
+{
+  "info": {
+    "name": "InfiniteChat-Agent RAG 测试接口",
+    "description": "用于测试 InfiniteChat-Agent 的普通聊天、RAG 引用溯源、动态知识写入和监控接口。默认服务地址：http://localhost:10010/api",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:10010/api",
+      "type": "string"
+    },
+    {
+      "key": "userId",
+      "value": "1",
+      "type": "string"
+    },
+    {
+      "key": "sessionId",
+      "value": "10001",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "1. 普通 AI 对话",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": {{userId}},\n  \"sessionId\": {{sessionId}},\n  \"prompt\": \"你好，介绍一下你自己\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/chat",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "chat"
+          ]
+        },
+        "description": "测试原有 /chat 接口，不返回引用来源。"
+      }
+    },
+    {
+      "name": "2. RAG 引用溯源问答 - 动态知识植入",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": {{userId}},\n  \"sessionId\": {{sessionId}},\n  \"prompt\": \"动态知识植入是什么意思？请给出来源。\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/rag/chat",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "rag",
+            "chat"
+          ]
+        },
+        "description": "测试新增 /rag/chat 接口，预期返回 answer、hit、retrievedCount、costMs、citations。"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('响应状态码为 200', function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test('返回引用来源 citations', function () {",
+              "    const json = pm.response.json();",
+              "    pm.expect(json).to.have.property('answer');",
+              "    pm.expect(json).to.have.property('citations');",
+              "    pm.expect(json.citations.length).to.be.greaterThan(0);",
+              "});",
+              "",
+              "pm.test('引用包含必要字段', function () {",
+              "    const citation = pm.response.json().citations[0];",
+              "    pm.expect(citation).to.have.property('docId');",
+              "    pm.expect(citation).to.have.property('chunkId');",
+              "    pm.expect(citation).to.have.property('fileName');",
+              "    pm.expect(citation).to.have.property('chunkIndex');",
+              "    pm.expect(citation).to.have.property('snippet');",
+              "    pm.expect(citation).to.have.property('vectorScore');",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. RAG 精确关键词测试 - RAG-409",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": {{userId}},\n  \"sessionId\": {{sessionId}},\n  \"prompt\": \"RAG-409 是什么错误？它的常见原因和处理建议是什么？\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/rag/chat",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "rag",
+            "chat"
+          ]
+        },
+        "description": "测试精确关键词召回。当前阶段仍是向量召回，后续混合检索阶段该问题应更稳定命中错误码章节。"
+      }
+    },
+    {
+      "name": "4. RAG 配置项测试 - WebSocket 心跳",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": {{userId}},\n  \"sessionId\": {{sessionId}},\n  \"prompt\": \"im.gateway.heartbeat-interval-seconds 默认是多少？长连接网关如何判断用户掉线？\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/rag/chat",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "rag",
+            "chat"
+          ]
+        },
+        "description": "测试配置项、流程类问题的引用溯源效果。"
+      }
+    },
+    {
+      "name": "5. RAG 相似概念测试 - Redis 记忆 vs RAG 知识库",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": {{userId}},\n  \"sessionId\": {{sessionId}},\n  \"prompt\": \"Redis 会话记忆和 RAG 知识库有什么区别？\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/rag/chat",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "rag",
+            "chat"
+          ]
+        },
+        "description": "测试相似概念问答，后续重排序阶段可用于观察答案是否更聚焦。"
+      }
+    },
+    {
+      "name": "6. RAG 未命中测试",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": {{userId}},\n  \"sessionId\": {{sessionId}},\n  \"prompt\": \"千言平台的火星基地无人机调度协议是什么？\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/rag/chat",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "rag",
+            "chat"
+          ]
+        },
+        "description": "测试知识库未命中。预期 hit=false 或回答明确说明知识库未提供足够信息。"
+      }
+    },
+    {
+      "name": "7. 手动插入知识点",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"question\": \"千言平台的灰度发布策略是什么？\",\n  \"answer\": \"千言平台采用按用户 ID 尾号分桶的灰度发布策略。默认先放量 5%，观察模型调用错误率、平均响应耗时和 RAG 命中率，指标稳定后逐步扩大到 25%、50% 和 100%。\",\n  \"sourceName\": \"RuntimeKnowledge.md\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/insert",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "insert"
+          ]
+        },
+        "description": "测试 /insert 知识写入。写入后会同步到 Markdown、MySQL 引用表和 PgVector。"
+      }
+    },
+    {
+      "name": "8. 复查刚插入的知识点",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": {{userId}},\n  \"sessionId\": {{sessionId}},\n  \"prompt\": \"千言平台的灰度发布策略是什么？请给出来源。\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/rag/chat",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "rag",
+            "chat"
+          ]
+        },
+        "description": "执行“手动插入知识点”后再调用本接口，预期 citations 中出现 RuntimeKnowledge.md。"
+      }
+    },
+    {
+      "name": "9. 流式聊天接口",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Accept",
+            "value": "text/event-stream"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": {{userId}},\n  \"sessionId\": {{sessionId}},\n  \"prompt\": \"请简要介绍 InfiniteChat-Agent 的核心能力\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/streamChat",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "streamChat"
+          ]
+        },
+        "description": "测试原有流式输出接口。Postman 可在 Body 区域观察分段返回。"
+      }
+    },
+    {
+      "name": "10. 健康检查",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/actuator/health",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "actuator",
+            "health"
+          ]
+        },
+        "description": "测试 Spring Boot Actuator 健康检查。"
+      }
+    },
+    {
+      "name": "11. Prometheus 指标",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/actuator/prometheus",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "actuator",
+            "prometheus"
+          ]
+        },
+        "description": "测试 Prometheus 指标暴露，重点关注 ai_model_requests_total、ai_model_tokens_total、ai_model_response_duration_seconds。"
+      }
+    }
+  ]
+}

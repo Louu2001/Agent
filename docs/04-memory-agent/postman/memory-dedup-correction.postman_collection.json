@@ -1,0 +1,174 @@
+{
+  "info": {
+    "name": "InfiniteChat Agent - Memory 去重与纠错测试",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:10010/api"
+    }
+  ],
+  "item": [
+    {
+      "name": "01 写入技术栈记忆",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/memory/write",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "memory",
+            "write"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": 1001,\n  \"sessionId\": 96001,\n  \"memoryType\": \"TECH_STACK\",\n  \"content\": \"用户的 Agent 项目核心技术栈是 Spring Boot 3、Java 17、LangChain4j、Redis、MySQL、Qwen、Prometheus 和 Grafana。\",\n  \"summary\": \"Agent 项目技术栈：Spring Boot 3、Java 17、LangChain4j、Redis、MySQL、Qwen、Prometheus、Grafana。\",\n  \"confidence\": 0.95,\n  \"source\": \"manual\"\n}"
+        }
+      }
+    },
+    {
+      "name": "02 写入相似技术栈记忆 - 应触发合并",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/memory/write",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "memory",
+            "write"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": 1001,\n  \"sessionId\": 96001,\n  \"memoryType\": \"TECH_STACK\",\n  \"content\": \"用户 Agent 项目使用 Spring Boot 3、Java 17、LangChain4j、Redis、MySQL、Qwen、Prometheus、Grafana。\",\n  \"summary\": \"Agent 技术栈：Spring Boot 3、Java 17、LangChain4j、Redis、MySQL、Qwen、Prometheus、Grafana。\",\n  \"confidence\": 0.96,\n  \"source\": \"manual\"\n}"
+        }
+      }
+    },
+    {
+      "name": "03 查询 TECH_STACK - 验证没有重复膨胀",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/memory/user/1001?memoryType=TECH_STACK&limit=10",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "memory",
+            "user",
+            "1001"
+          ],
+          "query": [
+            {
+              "key": "memoryType",
+              "value": "TECH_STACK"
+            },
+            {
+              "key": "limit",
+              "value": "10"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "04 用户纠错 - 禁用旧记忆并写入新事实",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/memory/correct",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "memory",
+            "correct"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": 1001,\n  \"sessionId\": 96001,\n  \"memoryType\": \"TECH_STACK\",\n  \"correctedContent\": \"用户的 Agent 项目数据库主要使用 MySQL 和 PgVector，其中 MySQL 存业务表，PgVector 存向量数据。\",\n  \"correctedSummary\": \"数据库纠正：MySQL 存业务表，PgVector 存向量数据。\",\n  \"reason\": \"用户纠正旧技术栈描述\",\n  \"confidence\": 0.98\n}"
+        }
+      }
+    },
+    {
+      "name": "05 再次查询 TECH_STACK - 只返回纠正后 ACTIVE 记忆",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/memory/user/1001?memoryType=TECH_STACK&limit=10",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "memory",
+            "user",
+            "1001"
+          ],
+          "query": [
+            {
+              "key": "memoryType",
+              "value": "TECH_STACK"
+            },
+            {
+              "key": "limit",
+              "value": "10"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "06 Memory Context - 验证纠正后记忆注入",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/memory/context",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "memory",
+            "context"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": 1001,\n  \"sessionId\": 96001,\n  \"prompt\": \"我的 Agent 项目数据库应该怎么描述？\"\n}"
+        }
+      }
+    }
+  ]
+}

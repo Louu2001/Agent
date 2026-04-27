@@ -297,17 +297,15 @@ POST /api/memory/correct
 
 ## Postman 文档
 
-测试集合位于：
+技术文档与 Postman 集合位于：
 
 ```text
-E:\Java\Agent\InfiniteChat-Agent-Docs\优化
+docs/
 ```
 
-重点集合：
+入口索引：
 
-- `03-Memory-Agent/Memory-Agent完整接口测试.postman_collection.json`
-- `04-Tool-Governance/Tool-Governance接口测试.postman_collection.json`
-- `05-Input-Guardrail/SafeInputGuardrail接口测试.postman_collection.json`
+- [docs/README.md](./docs/README.md)
 
 ## 简历最终版
 
