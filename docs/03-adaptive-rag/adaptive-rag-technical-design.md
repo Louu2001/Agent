@@ -313,7 +313,7 @@ rag:
 完整集合：
 
 ```text
-E:\Java\Agent\InfiniteChat-Agent-Docs\优化\02-Adaptive-RAG\Adaptive-RAG接口测试.postman_collection.json
+docs/03-adaptive-rag/postman/adaptive-rag.postman_collection.json
 ```
 
 ### 7.1 错误码关键词检索

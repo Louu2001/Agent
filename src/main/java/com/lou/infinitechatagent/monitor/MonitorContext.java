@@ -1,4 +1,4 @@
-package com.lou.infinitechatagent.Monitor;
+package com.lou.infinitechatagent.monitor;
 
 import java.io.Serial;
 import java.io.Serializable;

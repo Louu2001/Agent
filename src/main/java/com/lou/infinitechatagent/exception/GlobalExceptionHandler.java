@@ -1,4 +1,4 @@
-package com.lou.infinitechatagent.Exception;
+package com.lou.infinitechatagent.exception;
 
 
 import java.util.HashMap;

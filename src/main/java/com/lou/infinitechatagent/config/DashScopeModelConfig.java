@@ -3,7 +3,7 @@ package com.lou.infinitechatagent.config;
 import java.util.List;
 
 
-import com.lou.infinitechatagent.Monitor.AiModelMonitorListener;
+import com.lou.infinitechatagent.monitor.AiModelMonitorListener;
 import dev.langchain4j.community.model.dashscope.QwenChatModel;
 import dev.langchain4j.community.model.dashscope.QwenStreamingChatModel;
 import dev.langchain4j.model.chat.ChatModel;

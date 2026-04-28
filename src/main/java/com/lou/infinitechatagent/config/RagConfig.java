@@ -1,10 +1,6 @@
 package com.lou.infinitechatagent.config;
 
 
-import java.util.List;
-
-import dev.langchain4j.data.document.Document;
-import dev.langchain4j.data.document.loader.FileSystemDocumentLoader;
 import dev.langchain4j.data.document.splitter.DocumentByParagraphSplitter;
 import dev.langchain4j.data.segment.TextSegment;
 import dev.langchain4j.model.embedding.EmbeddingModel;
@@ -18,7 +14,6 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 @Configuration
-@SuppressWarnings({"all"})
 public class RagConfig {
 
 
@@ -27,9 +22,6 @@ public class RagConfig {
 
     @Resource
     private EmbeddingStore<TextSegment> embeddingStore;
-
-    @Value("${rag.docs-path}")
-    private String docsPath;
 
     @Value("${rag.chunk.segment-size:500}")
     private int segmentSize;

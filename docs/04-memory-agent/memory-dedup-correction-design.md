@@ -539,7 +539,7 @@ public MemoryItem correct(MemoryCorrectionRequest request) {
 Postman 文件：
 
 ```text
-E:\Java\Agent\InfiniteChat-Agent-Docs\优化\03-Memory-Agent\Memory-去重与纠错接口测试.postman_collection.json
+docs/04-memory-agent/postman/memory-dedup-correction.postman_collection.json
 ```
 
 推荐流程：

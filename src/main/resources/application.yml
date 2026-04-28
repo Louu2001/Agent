@@ -61,7 +61,7 @@ bigmodel:
   api-key: ${BIGMODEL_API_KEY:}
 
 rag:
-  docs-path: ${RAG_DOCS_PATH:E:\Java\Agent\InfiniteChat-Agent\src\main\resources\docs}
+  docs-path: ${RAG_DOCS_PATH:src/main/resources/docs}
   chunk:
     segment-size: ${RAG_CHUNK_SEGMENT_SIZE:500}
     segment-overlap: ${RAG_CHUNK_SEGMENT_OVERLAP:80}

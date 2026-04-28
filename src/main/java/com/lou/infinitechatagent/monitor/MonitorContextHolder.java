@@ -1,4 +1,4 @@
-package com.lou.infinitechatagent.Monitor;
+package com.lou.infinitechatagent.monitor;
 
 import lombok.extern.slf4j.Slf4j;
 

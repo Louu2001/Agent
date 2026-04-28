@@ -1,4 +1,4 @@
-package com.lou.infinitechatagent.Monitor;
+package com.lou.infinitechatagent.monitor;
 
 import java.time.Duration;
 import java.util.concurrent.ConcurrentHashMap;
