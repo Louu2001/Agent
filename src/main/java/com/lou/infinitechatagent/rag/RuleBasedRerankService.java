@@ -10,9 +10,8 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 @Service
-public class RuleBasedRerankService implements RerankService {
+public class RuleBasedRerankService {
 
-    @Override
     public List<RetrievedChunk> rerank(String query, List<RetrievedChunk> candidates, int topK) {
         Set<String> queryTerms = tokenize(query);
         return candidates.stream()

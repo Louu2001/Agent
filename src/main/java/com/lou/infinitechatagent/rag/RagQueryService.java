@@ -1,5 +1,6 @@
 package com.lou.infinitechatagent.rag;
 
+import com.lou.infinitechatagent.agent.context.AgentContext;
 import com.lou.infinitechatagent.rag.dto.Citation;
 import com.lou.infinitechatagent.rag.dto.RagQueryResponse;
 import com.lou.infinitechatagent.rag.dto.RetrievedChunk;
@@ -16,6 +17,7 @@ import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
 
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -61,6 +63,10 @@ public class RagQueryService {
     private double charsPerToken;
 
     public RagQueryResponse chatWithCitations(Long sessionId, String prompt) {
+        return chatWithCitations(sessionId, prompt, null);
+    }
+
+    public RagQueryResponse chatWithCitations(Long sessionId, String prompt, AgentContext agentContext) {
         long start = System.currentTimeMillis();
         MessageWindowChatMemory chatMemory = buildChatMemory(sessionId);
         List<ChatMessage> historyMessages = chatMemory.messages();
@@ -70,7 +76,8 @@ public class RagQueryService {
                 ? rerankService.rerank(prompt, candidates, rerankTopK)
                 : candidates.stream().limit(rerankTopK).toList();
         AtomicBoolean contextTruncated = new AtomicBoolean(false);
-        List<RetrievedChunk> budgetedChunks = applyTokenBudget(prompt, chunks, contextTruncated);
+        String memoryContext = buildAgentMemoryContext(agentContext);
+        List<RetrievedChunk> budgetedChunks = applyTokenBudget(prompt, memoryContext, chunks, contextTruncated);
         long retrievalCostMs = System.currentTimeMillis() - retrievalStart;
         log.info("RAG Rerank | enabled={} | before={} | after={}", rerankEnabled, candidates.size(), chunks.size());
 
@@ -87,13 +94,13 @@ public class RagQueryService {
                     .retrievalCostMs(retrievalCostMs)
                     .modelCostMs(0L)
                     .promptChars(prompt.length())
-                    .contextChars(0)
-                    .estimatedInputTokens(estimateTokens(prompt))
-                    .contextTruncated(false)
+                    .contextChars(memoryContext.length())
+                    .estimatedInputTokens(estimateTokens(prompt + memoryContext))
+                    .contextTruncated(Boolean.TRUE.equals(agentContext == null ? false : agentContext.getContextTruncated()))
                     .build();
         }
 
-        String userPrompt = buildUserPrompt(prompt, budgetedChunks, historyMessages);
+        String userPrompt = buildUserPrompt(prompt, budgetedChunks, historyMessages, memoryContext);
         long modelStart = System.currentTimeMillis();
         ChatResponse response = chatModel.chat(ChatRequest.builder()
                 .messages(
@@ -121,15 +128,19 @@ public class RagQueryService {
                 .retrievalCostMs(retrievalCostMs)
                 .modelCostMs(modelCostMs)
                 .promptChars(userPrompt.length())
-                .contextChars(totalContextChars(budgetedChunks))
+                .contextChars(totalContextChars(budgetedChunks) + memoryContext.length())
                 .estimatedInputTokens(estimateTokens(buildSystemPrompt() + userPrompt))
-                .contextTruncated(contextTruncated.get())
+                .contextTruncated(contextTruncated.get()
+                        || Boolean.TRUE.equals(agentContext == null ? false : agentContext.getContextTruncated()))
                 .build();
     }
 
-    private List<RetrievedChunk> applyTokenBudget(String prompt, List<RetrievedChunk> chunks, AtomicBoolean contextTruncated) {
+    private List<RetrievedChunk> applyTokenBudget(String prompt,
+                                                  String memoryContext,
+                                                  List<RetrievedChunk> chunks,
+                                                  AtomicBoolean contextTruncated) {
         int promptBudgetChars = Math.max(0, (int) ((maxInputTokens - reservedSystemTokens) * charsPerToken));
-        int fixedPromptChars = prompt.length() + 400;
+        int fixedPromptChars = prompt.length() + safeLength(memoryContext) + 600;
         int contextBudgetChars = Math.max(minChunkChars, promptBudgetChars - fixedPromptChars);
 
         List<RetrievedChunk> selected = chunks.stream()
@@ -200,6 +211,7 @@ public class RagQueryService {
     private String buildSystemPrompt() {
         return """
                 你是企业知识库问答助手。你必须严格根据提供的知识片段回答问题。
+                记忆上下文只用于理解用户背景、偏好和省略表达，不能作为事实来源引用。
                 如果知识片段不足以回答，请明确说明“当前知识库未提供足够信息”。
                 必须使用固定格式输出：
                 回答：
@@ -223,7 +235,10 @@ public class RagQueryService {
                 .build();
     }
 
-    private String buildUserPrompt(String prompt, List<RetrievedChunk> chunks, List<ChatMessage> historyMessages) {
+    private String buildUserPrompt(String prompt,
+                                   List<RetrievedChunk> chunks,
+                                   List<ChatMessage> historyMessages,
+                                   String memoryContext) {
         String history = buildHistory(historyMessages);
         String context = IntStream.range(0, chunks.size())
                 .mapToObj(index -> {
@@ -254,6 +269,9 @@ public class RagQueryService {
                 .reduce("", (left, right) -> left + "\n" + right);
 
         return String.format("""
+                记忆上下文：
+                %s
+
                 历史对话：
                 %s
 
@@ -271,7 +289,31 @@ public class RagQueryService {
                 引用：
                 [1] 文件名「章节路径」第x段
                 [2] 文件名「章节路径」第y段
-                """, history, prompt, context);
+                """, displayMemoryContext(memoryContext), history, prompt, context);
+    }
+
+    private String buildAgentMemoryContext(AgentContext agentContext) {
+        if (agentContext == null) {
+            return "";
+        }
+        StringBuilder builder = new StringBuilder();
+        if (StringUtils.hasText(agentContext.getMemoryText()) && !"暂无。".equals(agentContext.getMemoryText().strip())) {
+            builder.append(agentContext.getMemoryText().strip()).append("\n");
+        }
+        if (StringUtils.hasText(agentContext.getHistoryText()) && !"无".equals(agentContext.getHistoryText().strip())) {
+            builder.append("Agent 压缩历史窗口：\n")
+                    .append(agentContext.getHistoryText().strip())
+                    .append("\n");
+        }
+        return builder.toString().strip();
+    }
+
+    private String displayMemoryContext(String memoryContext) {
+        return StringUtils.hasText(memoryContext) ? memoryContext : "无";
+    }
+
+    private int safeLength(String text) {
+        return text == null ? 0 : text.length();
     }
 
     private String buildHistory(List<ChatMessage> historyMessages) {

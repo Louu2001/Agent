@@ -18,6 +18,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.util.Map;
+import java.util.LinkedHashMap;
 
 @Component
 @Slf4j
@@ -68,6 +69,15 @@ public class LlmAgentPlanner implements AgentPlanner {
         boolean needRetrieval = node.path("needRetrieval").asBoolean(actionType == AgentActionType.HYBRID_SEARCH);
         String reason = node.path("actionReason").asText(defaultReason(actionType));
         double confidence = clamp(node.path("confidence").asDouble(0.7));
+        Map<String, Object> arguments = new LinkedHashMap<>();
+        arguments.put("riskLevel", tool.getRiskLevel());
+        arguments.put("toolDescription", tool.getDescription());
+        arguments.put("plannerOutput", json);
+        if (node.path("arguments").isObject()) {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> plannerArguments = objectMapper.convertValue(node.path("arguments"), Map.class);
+            arguments.putAll(plannerArguments);
+        }
 
         return AgentPlan.builder()
                 .thought(reason)
@@ -79,11 +89,7 @@ public class LlmAgentPlanner implements AgentPlanner {
                         .type(actionType)
                         .toolName(tool.getName())
                         .query(prompt)
-                        .arguments(Map.of(
-                                "riskLevel", tool.getRiskLevel(),
-                                "toolDescription", tool.getDescription(),
-                                "plannerOutput", json
-                        ))
+                        .arguments(arguments)
                         .build())
                 .build();
     }
@@ -95,14 +101,25 @@ public class LlmAgentPlanner implements AgentPlanner {
                 1. NO_RETRIEVAL_ANSWER：闲聊、润色、翻译、通用解释，不需要企业知识库。
                 2. CURRENT_TIME：查询当前时间、今天日期。
                 3. HYBRID_SEARCH：涉及企业知识、私有文档、错误码、配置项、接口、类名、架构、流程、引用来源。
+                4. MEMORY_WRITE：用户明确要求“记住/请记下/以后记得”某个偏好、项目背景、技术栈或重要事实。
+                5. MEMORY_SEARCH：用户询问“你记得/我之前说过/我的偏好是什么/我的技术栈是什么”等长期记忆内容。
+                6. EMAIL_SEND：用户要求向明确邮箱地址发送邮件。
+                7. WEB_SEARCH：用户要求联网搜索、查询最新新闻、当前外部公开信息。
 
                 只输出 JSON，不要输出 Markdown，不要解释。
                 JSON 字段：
                 {
-                  "actionType": "NO_RETRIEVAL_ANSWER | CURRENT_TIME | HYBRID_SEARCH",
+                  "actionType": "NO_RETRIEVAL_ANSWER | CURRENT_TIME | HYBRID_SEARCH | MEMORY_WRITE | MEMORY_SEARCH | EMAIL_SEND | WEB_SEARCH",
                   "needRetrieval": true 或 false,
                   "actionReason": "选择该动作的原因，中文一句话",
-                  "confidence": 0.0 到 1.0
+                  "confidence": 0.0 到 1.0,
+                  "arguments": {
+                    "memoryType": "USER_PREFERENCE | PROJECT_CONTEXT | TECH_STACK | OUTPUT_STYLE | IMPORTANT_FACT，可选，仅 MEMORY_WRITE 使用",
+                    "memoryContent": "要写入的记忆内容，可选，仅 MEMORY_WRITE 使用",
+                    "targetEmail": "收件人邮箱，可选，仅 EMAIL_SEND 使用",
+                    "subject": "邮件标题，可选，仅 EMAIL_SEND 使用",
+                    "content": "邮件正文，可选，仅 EMAIL_SEND 使用"
+                  }
                 }
                 """;
     }
@@ -123,6 +140,10 @@ public class LlmAgentPlanner implements AgentPlanner {
         return switch (actionType) {
             case HYBRID_SEARCH -> "LLM 判断该问题需要检索企业知识库。";
             case CURRENT_TIME -> "LLM 判断该问题需要调用时间工具。";
+            case MEMORY_WRITE -> "LLM 判断该问题需要写入长期记忆。";
+            case MEMORY_SEARCH -> "LLM 判断该问题需要查询长期记忆。";
+            case EMAIL_SEND -> "LLM 判断该问题需要发送邮件。";
+            case WEB_SEARCH -> "LLM 判断该问题需要联网搜索。";
             case NO_RETRIEVAL_ANSWER -> "LLM 判断该问题可以直接回答。";
             default -> "LLM 已完成动作规划。";
         };

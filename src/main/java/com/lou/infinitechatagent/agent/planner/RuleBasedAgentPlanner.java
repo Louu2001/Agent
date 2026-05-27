@@ -18,6 +18,7 @@ public class RuleBasedAgentPlanner implements AgentPlanner {
     private static final Pattern CODE_OR_IDENTIFIER_PATTERN = Pattern.compile(
             "([A-Z]{2,}-\\d+)|([a-zA-Z][a-zA-Z0-9_]+\\.[a-zA-Z][a-zA-Z0-9_]+)|(@[A-Za-z]+)"
     );
+    private static final Pattern EMAIL_PATTERN = Pattern.compile("[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}", Pattern.CASE_INSENSITIVE);
 
     @Resource
     private ToolRegistry toolRegistry;
@@ -42,6 +43,46 @@ public class RuleBasedAgentPlanner implements AgentPlanner {
                     "问题询问实时日期或时间，调用时间工具比检索知识库更准确。",
                     "time_question",
                     0.95
+            );
+        }
+        if (isEmailRequest(prompt)) {
+            return buildPlan(
+                    AgentActionType.EMAIL_SEND,
+                    prompt,
+                    false,
+                    "用户要求发送邮件，该动作会产生外部副作用，需要走邮件工具和权限确认。",
+                    "email_send_requested",
+                    0.9
+            );
+        }
+        if (isMemoryWriteRequest(prompt)) {
+            return buildPlan(
+                    AgentActionType.MEMORY_WRITE,
+                    prompt,
+                    false,
+                    "用户明确要求记住长期信息，需要写入长期记忆。",
+                    "memory_write_requested",
+                    0.92
+            );
+        }
+        if (isMemorySearchRequest(prompt)) {
+            return buildPlan(
+                    AgentActionType.MEMORY_SEARCH,
+                    prompt,
+                    false,
+                    "用户询问之前说过的信息，需要显式查询长期记忆。",
+                    "memory_search_requested",
+                    0.9
+            );
+        }
+        if (isWebSearchRequest(prompt)) {
+            return buildPlan(
+                    AgentActionType.WEB_SEARCH,
+                    prompt,
+                    false,
+                    "用户要求查询最新或外部公开信息，需要调用联网搜索。",
+                    "web_search_requested",
+                    0.84
             );
         }
         if (shouldRetrieve(prompt)) {
@@ -99,6 +140,50 @@ public class RuleBasedAgentPlanner implements AgentPlanner {
                 || text.contains("今天几号")
                 || text.contains("current time")
                 || text.contains("now");
+    }
+
+    private boolean isEmailRequest(String prompt) {
+        String text = prompt.toLowerCase(Locale.ROOT);
+        return (text.contains("发邮件")
+                || text.contains("发送邮件")
+                || text.contains("发一封")
+                || text.contains("send email")
+                || text.contains("email"))
+                && EMAIL_PATTERN.matcher(prompt).find();
+    }
+
+    private boolean isMemoryWriteRequest(String prompt) {
+        String text = prompt.toLowerCase(Locale.ROOT);
+        return text.contains("记住")
+                || text.contains("帮我记")
+                || text.contains("请记下")
+                || text.contains("以后记得")
+                || text.contains("我的偏好是")
+                || text.contains("我的技术栈是")
+                || text.contains("我的项目是")
+                || text.contains("项目背景是");
+    }
+
+    private boolean isMemorySearchRequest(String prompt) {
+        String text = prompt.toLowerCase(Locale.ROOT);
+        return text.contains("你记得")
+                || text.contains("我之前")
+                || text.contains("之前说过")
+                || text.contains("我的偏好是什么")
+                || text.contains("我的技术栈是什么")
+                || text.contains("我上次说");
+    }
+
+    private boolean isWebSearchRequest(String prompt) {
+        String text = prompt.toLowerCase(Locale.ROOT);
+        return text.contains("联网")
+                || text.contains("搜索一下")
+                || text.contains("网上查")
+                || text.contains("查一下最新")
+                || text.contains("最新消息")
+                || text.contains("新闻")
+                || text.contains("web search")
+                || text.contains("google");
     }
 
     private boolean shouldRetrieve(String prompt) {

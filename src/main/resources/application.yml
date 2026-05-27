@@ -60,6 +60,18 @@ langchain4j:
 bigmodel:
   api-key: ${BIGMODEL_API_KEY:}
 
+mcp:
+  enabled: ${MCP_ENABLED:false}
+  bigmodel-search:
+    enabled: ${MCP_BIGMODEL_SEARCH_ENABLED:false}
+  time:
+    enabled: ${MCP_TIME_ENABLED:false}
+
+web-search:
+  enabled: ${WEB_SEARCH_ENABLED:false}
+  endpoint: ${WEB_SEARCH_ENDPOINT:http://localhost:8081/search}
+  max-results: ${WEB_SEARCH_MAX_RESULTS:5}
+
 rag:
   docs-path: ${RAG_DOCS_PATH:src/main/resources/docs}
   chunk:
@@ -73,6 +85,13 @@ rag:
     candidate-results: 20
   rerank:
     enabled: true
+    provider: ${RAG_RERANK_PROVIDER:bge}
+    endpoint: ${BGE_RERANK_ENDPOINT:http://localhost:8080/rerank}
+    model: ${RAG_RERANK_MODEL:BAAI/bge-reranker-v2-m3}
+    request-format: ${RAG_RERANK_REQUEST_FORMAT:tei}
+    api-key: ${BGE_RERANK_API_KEY:}
+    max-document-chars: ${RAG_RERANK_MAX_DOCUMENT_CHARS:3500}
+    failure-cooldown-ms: ${RAG_RERANK_FAILURE_COOLDOWN_MS:60000}
     top-k: 5
   citation:
     min-score: 0.75
@@ -131,6 +150,11 @@ agent:
   react:
     max-output-tokens: 500
     memory-max-messages: 20
+    context:
+      max-history-chars: ${AGENT_REACT_CONTEXT_MAX_HISTORY_CHARS:2000}
+      max-input-tokens: ${AGENT_REACT_CONTEXT_MAX_INPUT_TOKENS:1800}
+      reserved-system-tokens: ${AGENT_REACT_CONTEXT_RESERVED_SYSTEM_TOKENS:400}
+      chars-per-token: ${AGENT_REACT_CONTEXT_CHARS_PER_TOKEN:2.0}
     planner:
       mode: ${AGENT_REACT_PLANNER_MODE:LLM}
       max-output-tokens: 300

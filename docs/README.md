@@ -30,15 +30,18 @@ docs/
 ### 01 RAG Enhancement
 
 - [RAG Citation, Hybrid Search and Rerank Design](./01-rag-enhancement/rag-citation-hybrid-rerank-design.md)
+- [BGE Rerank Local Setup](./01-rag-enhancement/bge-rerank-setup.md)
 - [Cost-aware RAG Token Optimization](./01-rag-enhancement/cost-aware-rag-token-optimization.md)
 - [Markdown-aware Chunking Design](./01-rag-enhancement/markdown-aware-chunking-design.md)
 - [RAG Citation Postman Collection](./01-rag-enhancement/postman/rag-citation.postman_collection.json)
 - [Hybrid RAG Rerank Postman Collection](./01-rag-enhancement/postman/hybrid-rag-rerank.postman_collection.json)
+- [PDF RAG Postman Collection](./01-rag-enhancement/postman/pdf-rag.postman_collection.json)
 
 ### 02 ReAct Agent
 
 - [ReAct Agent Implementation](./02-react-agent/react-agent-implementation.md)
 - [ReAct Agent Postman Collection](./02-react-agent/postman/react-agent.postman_collection.json)
+- [ReAct Tool Orchestration Postman Collection](./02-react-agent/postman/react-agent-tools.postman_collection.json)
 
 ### 03 Adaptive RAG
 

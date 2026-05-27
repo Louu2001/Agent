@@ -2,7 +2,6 @@ package com.lou.infinitechatagent.rag;
 
 import dev.langchain4j.data.document.Document;
 import dev.langchain4j.data.document.Metadata;
-import dev.langchain4j.data.document.loader.FileSystemDocumentLoader;
 import dev.langchain4j.data.document.splitter.DocumentByParagraphSplitter;
 import dev.langchain4j.data.embedding.Embedding;
 import dev.langchain4j.data.segment.TextSegment;
@@ -10,10 +9,22 @@ import dev.langchain4j.model.embedding.EmbeddingModel;
 import dev.langchain4j.store.embedding.EmbeddingStore;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.jdbc.core.JdbcTemplate;
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.text.PDFTextStripper;
+import org.apache.poi.hwpf.HWPFDocument;
+import org.apache.poi.hwpf.extractor.WordExtractor;
+import org.apache.poi.xwpf.usermodel.IBodyElement;
+import org.apache.poi.xwpf.usermodel.XWPFDocument;
+import org.apache.poi.xwpf.usermodel.XWPFParagraph;
+import org.apache.poi.xwpf.usermodel.XWPFTable;
+import org.apache.poi.xwpf.usermodel.XWPFTableCell;
+import org.apache.poi.xwpf.usermodel.XWPFTableRow;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
+import java.io.IOException;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -23,16 +34,21 @@ import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Stream;
 
 @Service
 @Slf4j
 public class DocumentIngestionService {
 
     private static final Pattern MARKDOWN_HEADING_PATTERN = Pattern.compile("^(#{1,6})\\s+(.+)$");
+    private static final List<String> SUPPORTED_EXTENSIONS = List.of(
+            ".md", ".markdown", ".txt", ".pdf", ".doc", ".docx"
+    );
 
     @Resource
     private EmbeddingModel embeddingModel;
@@ -59,7 +75,12 @@ public class DocumentIngestionService {
     private double charsPerToken;
 
     public int ingestDocumentsFromPath(String docsPath) {
-        List<Document> documents = FileSystemDocumentLoader.loadDocuments(docsPath);
+        Path rootPath = Paths.get(docsPath);
+        if (!Files.exists(rootPath)) {
+            log.warn("RAG - 文档路径不存在: {}", rootPath.toAbsolutePath().normalize());
+            return 0;
+        }
+        List<Document> documents = loadDocuments(rootPath);
         int chunkCount = 0;
         for (Document document : documents) {
             chunkCount += ingestDocument(document, "local_file");
@@ -180,7 +201,7 @@ public class DocumentIngestionService {
 
     private String chunkProfile(String fileName) {
         return String.join("|",
-                isMarkdown(fileName) ? "markdown-aware-v1" : "paragraph-v1",
+                documentFormat(fileName) + "-paragraph-v2",
                 "size=" + segmentSize,
                 "overlap=" + segmentOverlap,
                 "min=" + minChunkChars);
@@ -190,7 +211,7 @@ public class DocumentIngestionService {
         if (isMarkdown(fileName)) {
             return splitMarkdown(document.text());
         }
-        return splitPlainText(document.text(), null, null, "paragraph");
+        return splitPlainText(document.text(), null, null, documentFormat(fileName) + "_paragraph");
     }
 
     private List<ChunkCandidate> splitMarkdown(String text) {
@@ -277,7 +298,139 @@ public class DocumentIngestionService {
     }
 
     private boolean isMarkdown(String fileName) {
-        return fileName != null && fileName.toLowerCase().endsWith(".md");
+        if (fileName == null) {
+            return false;
+        }
+        String extension = extension(fileName);
+        return ".md".equals(extension) || ".markdown".equals(extension);
+    }
+
+    private boolean isSupportedKnowledgeDocument(Path path) {
+        return path != null && Files.isRegularFile(path) && SUPPORTED_EXTENSIONS.contains(extension(path.getFileName().toString()));
+    }
+
+    private List<Document> loadDocuments(Path rootPath) {
+        try (Stream<Path> paths = Files.walk(rootPath)) {
+            return paths
+                    .filter(this::isSupportedKnowledgeDocument)
+                    .map(this::loadDocument)
+                    .flatMap(Optional::stream)
+                    .toList();
+        } catch (IOException e) {
+            throw new IllegalStateException("读取知识文档目录失败: " + rootPath.toAbsolutePath().normalize(), e);
+        }
+    }
+
+    private Optional<Document> loadDocument(Path path) {
+        try {
+            String text = extractText(path);
+            if (text == null || text.isBlank()) {
+                log.warn("RAG - 文档 [{}] 未提取到有效文本，已跳过", path);
+                return Optional.empty();
+            }
+            Metadata metadata = Metadata.from("file_name", path.getFileName().toString());
+            metadata.put("absolute_directory_path", path.toAbsolutePath().normalize().toString())
+                    .put("file_extension", extension(path.getFileName().toString()))
+                    .put("document_format", documentFormat(path.getFileName().toString()));
+            return Optional.of(Document.from(text, metadata));
+        } catch (Exception e) {
+            log.warn("RAG - 文档 [{}] 解析失败，已跳过: {}", path, e.getMessage());
+            return Optional.empty();
+        }
+    }
+
+    private String extractText(Path path) throws IOException {
+        String extension = extension(path.getFileName().toString());
+        String text = switch (extension) {
+            case ".pdf" -> readPdf(path);
+            case ".doc" -> readDoc(path);
+            case ".docx" -> readDocx(path);
+            default -> Files.readString(path, StandardCharsets.UTF_8);
+        };
+        return normalizeExtractedText(text);
+    }
+
+    private String readPdf(Path path) throws IOException {
+        try (PDDocument document = PDDocument.load(path.toFile())) {
+            PDFTextStripper stripper = new PDFTextStripper();
+            stripper.setSortByPosition(true);
+            return stripper.getText(document);
+        }
+    }
+
+    private String readDoc(Path path) throws IOException {
+        try (InputStream inputStream = Files.newInputStream(path);
+             HWPFDocument document = new HWPFDocument(inputStream);
+             WordExtractor extractor = new WordExtractor(document)) {
+            return extractor.getText();
+        }
+    }
+
+    private String readDocx(Path path) throws IOException {
+        try (InputStream inputStream = Files.newInputStream(path);
+             XWPFDocument document = new XWPFDocument(inputStream)) {
+            StringBuilder builder = new StringBuilder();
+            for (IBodyElement element : document.getBodyElements()) {
+                if (element instanceof XWPFParagraph paragraph) {
+                    appendLine(builder, paragraph.getText());
+                } else if (element instanceof XWPFTable table) {
+                    appendTable(builder, table);
+                }
+            }
+            return builder.toString();
+        }
+    }
+
+    private void appendTable(StringBuilder builder, XWPFTable table) {
+        for (XWPFTableRow row : table.getRows()) {
+            List<String> cells = new ArrayList<>();
+            for (XWPFTableCell cell : row.getTableCells()) {
+                String cellText = cell.getText();
+                if (cellText != null && !cellText.isBlank()) {
+                    cells.add(cellText.strip().replaceAll("\\R+", " "));
+                }
+            }
+            if (!cells.isEmpty()) {
+                appendLine(builder, String.join(" | ", cells));
+            }
+        }
+    }
+
+    private void appendLine(StringBuilder builder, String text) {
+        if (text != null && !text.isBlank()) {
+            builder.append(text.strip()).append('\n');
+        }
+    }
+
+    private String normalizeExtractedText(String text) {
+        if (text == null) {
+            return "";
+        }
+        return text
+                .replace('\u0000', ' ')
+                .replace("\r\n", "\n")
+                .replace('\r', '\n')
+                .replaceAll("[ \\t\\x0B\\f]+", " ")
+                .replaceAll("\\n{3,}", "\n\n")
+                .strip();
+    }
+
+    private String documentFormat(String fileName) {
+        return switch (extension(fileName)) {
+            case ".md", ".markdown" -> "markdown";
+            case ".pdf" -> "pdf";
+            case ".doc", ".docx" -> "word";
+            default -> "text";
+        };
+    }
+
+    private String extension(String fileName) {
+        if (fileName == null || fileName.isBlank()) {
+            return "";
+        }
+        String normalized = fileName.toLowerCase(Locale.ROOT);
+        int dotIndex = normalized.lastIndexOf('.');
+        return dotIndex < 0 ? "" : normalized.substring(dotIndex);
     }
 
     private int estimateTokens(String text) {

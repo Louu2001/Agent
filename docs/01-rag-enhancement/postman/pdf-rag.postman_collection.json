@@ -1,0 +1,233 @@
+{
+  "info": {
+    "name": "InfiniteChat-Agent PDF RAG 接口测试",
+    "description": "通过接口验证 PDF 文档入库、RAG 引用溯源和 ReAct Agent 查询。默认服务地址：http://localhost:10010/api",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:10010/api",
+      "type": "string"
+    },
+    {
+      "key": "userId",
+      "value": "1",
+      "type": "string"
+    },
+    {
+      "key": "sessionId",
+      "value": "30001",
+      "type": "string"
+    },
+    {
+      "key": "pdfPath",
+      "value": "E:/Java/Java八股大全/java基础知识八股大全.pdf",
+      "type": "string"
+    },
+    {
+      "key": "pdfQuestion",
+      "value": "根据 PDF 文档，什么是面向对象编程？请给出引用。",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "1. 健康检查",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/actuator/health",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "actuator",
+            "health"
+          ]
+        },
+        "description": "确认服务已启动。"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('状态码 200', function () {",
+              "  pm.response.to.have.status(200);",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. 导入 PDF 文档",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"path\": \"{{pdfPath}}\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/rag/documents/ingest",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "rag",
+            "documents",
+            "ingest"
+          ]
+        },
+        "description": "触发指定 PDF 入库。首次执行 chunkCount 通常大于 0；重复执行时可能为 0，表示已入库且无新增片段。"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('状态码 200', function () {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test('入库接口返回成功结构', function () {",
+              "  const json = pm.response.json();",
+              "  pm.expect(json.code).to.eql(200);",
+              "  pm.expect(json.data).to.have.property('path');",
+              "  pm.expect(json.data).to.have.property('chunkCount');",
+              "  pm.expect(json.data.chunkCount).to.be.a('number');",
+              "});",
+              "",
+              "pm.test('入库路径指向 PDF', function () {",
+              "  const path = pm.response.json().data.path.replace(/\\\\/g, '/').toLowerCase();",
+              "  pm.expect(path).to.include('.pdf');",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. RAG 查询 PDF 内容",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": {{userId}},\n  \"sessionId\": {{sessionId}},\n  \"prompt\": \"{{pdfQuestion}}\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/rag/chat",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "rag",
+            "chat"
+          ]
+        },
+        "description": "通过 RAG 问答验证 PDF 片段是否能被召回，并返回 PDF 引用来源。"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('状态码 200', function () {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test('RAG 返回命中和引用', function () {",
+              "  const json = pm.response.json();",
+              "  pm.expect(json.hit).to.eql(true);",
+              "  pm.expect(json.citations.length).to.be.greaterThan(0);",
+              "});",
+              "",
+              "pm.test('至少一个引用来自 PDF', function () {",
+              "  const citations = pm.response.json().citations || [];",
+              "  const pdfCitations = citations.filter(c => (c.fileName || '').toLowerCase().endsWith('.pdf'));",
+              "  pm.expect(pdfCitations.length).to.be.greaterThan(0);",
+              "});",
+              "",
+              "pm.test('引用包含检索与重排分数', function () {",
+              "  const citation = pm.response.json().citations[0];",
+              "  pm.expect(citation).to.have.property('retrievalSource');",
+              "  pm.expect(citation).to.have.property('fusionScore');",
+              "  pm.expect(citation).to.have.property('rerankScore');",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. ReAct Agent 查询 PDF 内容",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": {{userId}},\n  \"sessionId\": {{sessionId}},\n  \"prompt\": \"{{pdfQuestion}}\",\n  \"debug\": true\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/agent/chat",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "agent",
+            "chat"
+          ]
+        },
+        "description": "通过 ReAct Agent 入口验证 Planner 能把 PDF 文档问题路由到 Hybrid RAG。"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('状态码 200', function () {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test('Agent 走 RAG 策略', function () {",
+              "  const json = pm.response.json();",
+              "  pm.expect(json.strategy).to.eql('REACT_HYBRID_RAG');",
+              "  pm.expect(json.reactTrace.length).to.be.greaterThan(0);",
+              "  pm.expect(json.reactTrace[0].action.type).to.eql('HYBRID_SEARCH');",
+              "});",
+              "",
+              "pm.test('Agent 引用来自 PDF', function () {",
+              "  const citations = pm.response.json().citations || [];",
+              "  const pdfCitations = citations.filter(c => (c.fileName || '').toLowerCase().endsWith('.pdf'));",
+              "  pm.expect(pdfCitations.length).to.be.greaterThan(0);",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ]
+    }
+  ]
+}

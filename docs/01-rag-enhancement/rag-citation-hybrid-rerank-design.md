@@ -350,8 +350,8 @@ List<RetrievedChunk> fused = merged.values().stream()
 
 可选模型：
 
+- BGE reranker，例如 `BAAI/bge-reranker-v2-m3`。
 - DashScope text-rerank 系列模型。
-- BGE reranker。
 - Cohere Rerank。
 
 流程：
@@ -409,7 +409,7 @@ public interface RerankService {
 
 ```text
 RuleBasedRerankService
-DashScopeRerankService
+BgeRerankService
 ```
 
 通过配置切换：
@@ -418,7 +418,10 @@ DashScopeRerankService
 rag:
   rerank:
     enabled: true
-    provider: rule
+    provider: bge
+    endpoint: http://localhost:8080/rerank
+    model: BAAI/bge-reranker-v2-m3
+    request-format: tei
     top-k: 5
 ```
 

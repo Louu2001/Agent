@@ -3,6 +3,7 @@ package com.lou.infinitechatagent.agent.dto;
 import java.util.List;
 
 import com.lou.infinitechatagent.agent.governance.dto.ToolGovernanceDecision;
+import com.lou.infinitechatagent.memory.dto.MemoryTrace;
 import com.lou.infinitechatagent.rag.dto.Citation;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -34,6 +35,8 @@ public class AgentResponse {
     private Integer estimatedInputTokens;
 
     private Boolean contextTruncated;
+
+    private MemoryTrace memoryTrace;
 
     private ToolGovernanceDecision toolGovernance;
 }

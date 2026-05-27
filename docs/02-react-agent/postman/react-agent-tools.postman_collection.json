@@ -1,0 +1,244 @@
+{
+  "info": {
+    "name": "InfiniteChat-Agent ReAct 工具编排测试",
+    "description": "验证 ReAct Agent 的 memory_write、memory_search、email_send、web_search 工具编排与 Tool Governance。默认服务地址：http://localhost:10010/api",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:10010/api",
+      "type": "string"
+    },
+    {
+      "key": "userId",
+      "value": "1",
+      "type": "string"
+    },
+    {
+      "key": "sessionId",
+      "value": "40001",
+      "type": "string"
+    },
+    {
+      "key": "testEmail",
+      "value": "test@example.com",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "1. 查看 ReAct 工具注册表",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/agent/tools",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "agent",
+            "tools"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('包含新增工具', function () {",
+              "  const names = pm.response.json().map(t => t.name);",
+              "  pm.expect(names).to.include('memory_write');",
+              "  pm.expect(names).to.include('memory_search');",
+              "  pm.expect(names).to.include('email_send');",
+              "  pm.expect(names).to.include('web_search');",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. 写入长期记忆 MEMORY_WRITE",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": {{userId}},\n  \"sessionId\": {{sessionId}},\n  \"prompt\": \"请记住：我的项目技术栈是 Java 17、Spring Boot 3、Redis、MySQL、PgVector 和 LangChain4j。\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/agent/chat",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "agent",
+            "chat"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('走 MEMORY_WRITE', function () {",
+              "  const json = pm.response.json();",
+              "  pm.expect(json.strategy).to.eql('REACT_MEMORY_WRITE');",
+              "  pm.expect(json.reactTrace[0].action.type).to.eql('MEMORY_WRITE');",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. 查询长期记忆 MEMORY_SEARCH",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": {{userId}},\n  \"sessionId\": {{sessionId}},\n  \"prompt\": \"你记得我的项目技术栈是什么吗？\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/agent/chat",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "agent",
+            "chat"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('走 MEMORY_SEARCH', function () {",
+              "  const json = pm.response.json();",
+              "  pm.expect(json.strategy).to.eql('REACT_MEMORY_SEARCH');",
+              "  pm.expect(json.reactTrace[0].action.type).to.eql('MEMORY_SEARCH');",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. 邮件发送需确认 EMAIL_SEND",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": {{userId}},\n  \"sessionId\": {{sessionId}},\n  \"prompt\": \"请发送邮件给 {{testEmail}}，标题是测试邮件，内容是这是一封 ReAct 工具治理测试邮件。\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/agent/chat",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "agent",
+            "chat"
+          ]
+        },
+        "description": "email_send 风险等级 HIGH，默认需要 confirmedTools 包含 email_send 才会真正执行。"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('邮件工具被确认机制拦截', function () {",
+              "  const json = pm.response.json();",
+              "  pm.expect(json.strategy).to.eql('REACT_TOOL_BLOCKED');",
+              "  pm.expect(json.toolGovernance.confirmationRequired).to.eql(true);",
+              "  pm.expect(json.toolGovernance.toolName).to.eql('email_send');",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ]
+    },
+    {
+      "name": "5. 确认后发送邮件 EMAIL_SEND",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": {{userId}},\n  \"sessionId\": {{sessionId}},\n  \"prompt\": \"请发送邮件给 {{testEmail}}，标题是测试邮件，内容是这是一封 ReAct 工具治理测试邮件。\",\n  \"confirmedTools\": [\"email_send\"]\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/agent/chat",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "agent",
+            "chat"
+          ]
+        },
+        "description": "只有邮件 SMTP 配置正确时才会发送成功；否则会返回邮件发送失败原因。"
+      }
+    },
+    {
+      "name": "6. 联网搜索 WEB_SEARCH",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": {{userId}},\n  \"sessionId\": {{sessionId}},\n  \"prompt\": \"联网搜索一下今天 Java 生态有什么最新消息。\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/agent/chat",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "agent",
+            "chat"
+          ]
+        },
+        "description": "默认 WEB_SEARCH_ENABLED=false，会返回配置提示。启用 SearXNG 后可返回搜索结果。"
+      }
+    }
+  ]
+}
