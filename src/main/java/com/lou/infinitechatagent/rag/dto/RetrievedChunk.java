@@ -27,6 +27,8 @@ public class RetrievedChunk {
 
     private String chunkType;
 
+    private Integer pageNumber;
+
     private Integer charCount;
 
     private Integer tokenEstimate;
@@ -52,6 +54,7 @@ public class RetrievedChunk {
                 .chunkIndex(chunkIndex)
                 .sectionTitle(sectionTitle)
                 .headingPath(headingPath)
+                .pageNumber(pageNumber)
                 .snippet(text)
                 .retrievalSource(retrievalSource)
                 .vectorScore(vectorScore)
@@ -85,6 +88,9 @@ public class RetrievedChunk {
         }
         if (this.chunkType == null) {
             this.chunkType = other.getChunkType();
+        }
+        if (this.pageNumber == null) {
+            this.pageNumber = other.getPageNumber();
         }
         if (this.charCount == null) {
             this.charCount = other.getCharCount();

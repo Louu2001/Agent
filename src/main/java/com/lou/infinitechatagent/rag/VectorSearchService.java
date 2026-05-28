@@ -57,6 +57,7 @@ public class VectorSearchService {
                 .sectionTitle(segment.metadata().getString("section_title"))
                 .headingPath(segment.metadata().getString("heading_path"))
                 .chunkType(segment.metadata().getString("chunk_type"))
+                .pageNumber(segment.metadata().getInteger("page_number"))
                 .charCount(segment.metadata().getInteger("char_count"))
                 .tokenEstimate(segment.metadata().getInteger("token_estimate"))
                 .text(text)

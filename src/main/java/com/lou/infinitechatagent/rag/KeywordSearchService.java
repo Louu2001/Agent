@@ -29,7 +29,7 @@ public class KeywordSearchService {
                 .toList());
         String sql = """
                 select chunk_id, doc_id, file_name, chunk_index,
-                       section_title, heading_path, chunk_type, char_count, token_estimate,
+                       section_title, heading_path, chunk_type, page_number, char_count, token_estimate,
                        content, embedding_id
                 from rag_chunk
                 where %s
@@ -48,6 +48,7 @@ public class KeywordSearchService {
                     .sectionTitle(rs.getString("section_title"))
                     .headingPath(rs.getString("heading_path"))
                     .chunkType(rs.getString("chunk_type"))
+                    .pageNumber((Integer) rs.getObject("page_number"))
                     .charCount((Integer) rs.getObject("char_count"))
                     .tokenEstimate((Integer) rs.getObject("token_estimate"))
                     .text(limitText(content))

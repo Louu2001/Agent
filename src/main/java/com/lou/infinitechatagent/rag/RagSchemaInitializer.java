@@ -38,6 +38,7 @@ public class RagSchemaInitializer {
                     section_title varchar(255),
                     heading_path varchar(512),
                     chunk_type varchar(64),
+                    page_number int,
                     char_count int,
                     token_estimate int,
                     content text not null,
@@ -53,6 +54,7 @@ public class RagSchemaInitializer {
         addColumnIfMissing("rag_chunk", "section_title", "varchar(255)");
         addColumnIfMissing("rag_chunk", "heading_path", "varchar(512)");
         addColumnIfMissing("rag_chunk", "chunk_type", "varchar(64)");
+        addColumnIfMissing("rag_chunk", "page_number", "int");
         addColumnIfMissing("rag_chunk", "char_count", "int");
         addColumnIfMissing("rag_chunk", "token_estimate", "int");
     }

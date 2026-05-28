@@ -525,6 +525,12 @@ public class AdaptiveRagOrchestrator {
                 .chunkId(source.getChunkId())
                 .fileName(source.getFileName())
                 .chunkIndex(source.getChunkIndex())
+                .sectionTitle(source.getSectionTitle())
+                .headingPath(source.getHeadingPath())
+                .chunkType(source.getChunkType())
+                .pageNumber(source.getPageNumber())
+                .charCount(source.getCharCount())
+                .tokenEstimate(source.getTokenEstimate())
                 .text(text)
                 .vectorScore(source.getVectorScore())
                 .keywordScore(source.getKeywordScore())
@@ -555,7 +561,7 @@ public class AdaptiveRagOrchestrator {
                 xxx
 
                 引用：
-                [1] xxx.md 第3段
+                [1] xxx.md 第3页 第3段
                 [2] xxx.md 第1段
                 回答正文中的关键结论可以使用 [1]、[2] 标记引用依据。
                 引用列表只能列出本次提供的知识片段编号，不得编造来源。
@@ -569,12 +575,16 @@ public class AdaptiveRagOrchestrator {
                     return String.format("""
                             [%d]
                             文件：%s
+                            章节：%s
+                            页码：%s
                             段落：%s
                             来源：%s
                             内容：%s
                             """,
                             index + 1,
                             chunk.getFileName(),
+                            displaySection(chunk),
+                            displayPage(chunk),
                             chunk.getChunkIndex(),
                             chunk.getRetrievalSource(),
                             chunk.getText());
@@ -637,10 +647,32 @@ public class AdaptiveRagOrchestrator {
         String citationText = IntStream.range(0, citations.size())
                 .mapToObj(index -> {
                     Citation citation = citations.get(index);
-                    return String.format("[%d] %s 第%s段", index + 1, citation.getFileName(), citation.getChunkIndex());
+                    return String.format("[%d] %s%s 第%s段",
+                            index + 1,
+                            citation.getFileName(),
+                            displayCitationPage(citation),
+                            citation.getChunkIndex());
                 })
                 .reduce("", (left, right) -> left + (left.isBlank() ? "" : "\n") + right);
         return safeAnswer + "\n\n引用：\n" + citationText;
+    }
+
+    private String displaySection(RetrievedChunk chunk) {
+        if (chunk.getHeadingPath() != null && !chunk.getHeadingPath().isBlank()) {
+            return chunk.getHeadingPath();
+        }
+        if (chunk.getSectionTitle() != null && !chunk.getSectionTitle().isBlank()) {
+            return chunk.getSectionTitle();
+        }
+        return "未标注";
+    }
+
+    private String displayPage(RetrievedChunk chunk) {
+        return chunk.getPageNumber() == null ? "未标注" : "第" + chunk.getPageNumber() + "页";
+    }
+
+    private String displayCitationPage(Citation citation) {
+        return citation.getPageNumber() == null ? "" : " 第" + citation.getPageNumber() + "页";
     }
 
     private String ensureNoCitationAnswer(String answer) {

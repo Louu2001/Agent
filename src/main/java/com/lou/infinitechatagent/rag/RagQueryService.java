@@ -170,6 +170,7 @@ public class RagQueryService {
                 .sectionTitle(source.getSectionTitle())
                 .headingPath(source.getHeadingPath())
                 .chunkType(source.getChunkType())
+                .pageNumber(source.getPageNumber())
                 .charCount(source.getCharCount())
                 .tokenEstimate(source.getTokenEstimate())
                 .text(text)
@@ -218,7 +219,7 @@ public class RagQueryService {
                 xxx
 
                 引用：
-                [1] xxx.md「章节路径」第3段
+                [1] xxx.md「章节路径」第3页 第3段
                 [2] xxx.md「章节路径」第1段
                 回答正文中的关键结论可以使用 [1]、[2] 标记引用依据。
                 引用列表只能列出本次提供的知识片段编号，不得编造来源。
@@ -247,6 +248,7 @@ public class RagQueryService {
                         [%d]
                         文件：%s
                         章节：%s
+                        页码：%s
                         段落：%s
                         来源：%s
                         向量分：%.4f
@@ -258,6 +260,7 @@ public class RagQueryService {
                         index + 1,
                         chunk.getFileName(),
                         displaySection(chunk),
+                        displayPage(chunk),
                         chunk.getChunkIndex(),
                         chunk.getRetrievalSource(),
                         safeDouble(chunk.getVectorScore()),
@@ -287,7 +290,7 @@ public class RagQueryService {
                 这里写答案正文，关键结论后用 [1]、[2] 标注来源。
 
                 引用：
-                [1] 文件名「章节路径」第x段
+                [1] 文件名「章节路径」第x页 第y段
                 [2] 文件名「章节路径」第y段
                 """, displayMemoryContext(memoryContext), history, prompt, context);
     }
@@ -351,6 +354,7 @@ public class RagQueryService {
                     .append("] ")
                     .append(citation.getFileName())
                     .append(displayCitationSection(citation))
+                    .append(displayCitationPage(citation))
                     .append(" 第")
                     .append(citation.getChunkIndex())
                     .append("段\n");
@@ -368,12 +372,20 @@ public class RagQueryService {
         return "未标注";
     }
 
+    private String displayPage(RetrievedChunk chunk) {
+        return chunk.getPageNumber() == null ? "未标注" : "第" + chunk.getPageNumber() + "页";
+    }
+
     private String displayCitationSection(Citation citation) {
         String section = citation.getHeadingPath();
         if (section == null || section.isBlank()) {
             section = citation.getSectionTitle();
         }
         return section == null || section.isBlank() ? "" : "「" + section + "」";
+    }
+
+    private String displayCitationPage(Citation citation) {
+        return citation.getPageNumber() == null ? "" : " 第" + citation.getPageNumber() + "页";
     }
 
     private double safeDouble(Double value) {

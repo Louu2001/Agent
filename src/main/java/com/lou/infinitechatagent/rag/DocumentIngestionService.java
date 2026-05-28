@@ -16,6 +16,8 @@ import org.apache.poi.hwpf.extractor.WordExtractor;
 import org.apache.poi.xwpf.usermodel.IBodyElement;
 import org.apache.poi.xwpf.usermodel.XWPFDocument;
 import org.apache.poi.xwpf.usermodel.XWPFParagraph;
+import org.apache.poi.xwpf.usermodel.XWPFStyle;
+import org.apache.poi.xwpf.usermodel.XWPFStyles;
 import org.apache.poi.xwpf.usermodel.XWPFTable;
 import org.apache.poi.xwpf.usermodel.XWPFTableCell;
 import org.apache.poi.xwpf.usermodel.XWPFTableRow;
@@ -80,10 +82,10 @@ public class DocumentIngestionService {
             log.warn("RAG - 文档路径不存在: {}", rootPath.toAbsolutePath().normalize());
             return 0;
         }
-        List<Document> documents = loadDocuments(rootPath);
+        List<LoadedDocument> documents = loadDocuments(rootPath);
         int chunkCount = 0;
-        for (Document document : documents) {
-            chunkCount += ingestDocument(document, "local_file");
+        for (LoadedDocument document : documents) {
+            chunkCount += ingestDocument(document.document(), document.blocks(), "local_file");
         }
         return chunkCount;
     }
@@ -97,6 +99,11 @@ public class DocumentIngestionService {
     }
 
     public int ingestDocument(Document document, String sourceType) {
+        String fileName = resolveFileName(document);
+        return ingestDocument(document, extractDocumentBlocks(document.text(), fileName), sourceType);
+    }
+
+    private int ingestDocument(Document document, List<DocumentBlock> blocks, String sourceType) {
         String fileName = resolveFileName(document);
         String filePath = resolveFilePath(document);
         String docId = "doc_" + sha256(fileName);
@@ -117,7 +124,7 @@ public class DocumentIngestionService {
                     updated_at = current_timestamp
                 """, docId, fileName, filePath, sourceType, contentHash);
 
-        List<ChunkCandidate> splitSegments = splitDocument(document, fileName);
+        List<ChunkCandidate> splitSegments = splitBlocks(blocks);
         List<String> ids = new ArrayList<>();
         List<TextSegment> segments = new ArrayList<>();
         int skippedCount = 0;
@@ -147,10 +154,10 @@ public class DocumentIngestionService {
             ragJdbcTemplate.update("""
                     insert into rag_chunk(
                         chunk_id, doc_id, file_name, chunk_index,
-                        section_title, heading_path, chunk_type, char_count, token_estimate,
+                        section_title, heading_path, chunk_type, page_number, char_count, token_estimate,
                         content, embedding_id
                     )
-                    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     on duplicate key update
                         doc_id = values(doc_id),
                         file_name = values(file_name),
@@ -158,6 +165,7 @@ public class DocumentIngestionService {
                         section_title = values(section_title),
                         heading_path = values(heading_path),
                         chunk_type = values(chunk_type),
+                        page_number = values(page_number),
                         char_count = values(char_count),
                         token_estimate = values(token_estimate),
                         content = values(content),
@@ -170,6 +178,7 @@ public class DocumentIngestionService {
                     splitSegment.sectionTitle(),
                     splitSegment.headingPath(),
                     splitSegment.chunkType(),
+                    splitSegment.pageNumber(),
                     charCount,
                     tokenEstimate,
                     chunkText,
@@ -201,27 +210,63 @@ public class DocumentIngestionService {
 
     private String chunkProfile(String fileName) {
         return String.join("|",
-                documentFormat(fileName) + "-paragraph-v2",
+                documentFormat(fileName) + "-structured-block-v1",
                 "size=" + segmentSize,
                 "overlap=" + segmentOverlap,
                 "min=" + minChunkChars);
     }
 
     private List<ChunkCandidate> splitDocument(Document document, String fileName) {
-        if (isMarkdown(fileName)) {
-            return splitMarkdown(document.text());
-        }
-        return splitPlainText(document.text(), null, null, documentFormat(fileName) + "_paragraph");
+        return splitBlocks(extractDocumentBlocks(document.text(), fileName));
     }
 
     private List<ChunkCandidate> splitMarkdown(String text) {
+        return splitBlocks(parseMarkdownBlocks(text));
+    }
+
+    private List<DocumentBlock> extractDocumentBlocks(String text, String fileName) {
+        if (isMarkdown(fileName)) {
+            return parseMarkdownBlocks(text);
+        }
+        return parsePlainTextBlocks(text, documentFormat(fileName) + "_paragraph");
+    }
+
+    private List<DocumentBlock> parseMarkdownBlocks(String text) {
         List<MarkdownSection> sections = parseMarkdownSections(text);
         if (sections.isEmpty()) {
-            return splitPlainText(text, null, null, "markdown");
+            return parsePlainTextBlocks(text, "markdown");
+        }
+        return sections.stream()
+                .map(section -> new DocumentBlock(
+                        section.content(),
+                        section.sectionTitle(),
+                        section.headingPath(),
+                        "markdown_section",
+                        null
+                ))
+                .toList();
+    }
+
+    private List<DocumentBlock> parsePlainTextBlocks(String text, String blockType) {
+        String normalized = normalizeExtractedText(text);
+        if (!isValidChunk(normalized)) {
+            return List.of();
+        }
+        return List.of(new DocumentBlock(normalized, null, null, blockType, null));
+    }
+
+    private List<ChunkCandidate> splitBlocks(List<DocumentBlock> blocks) {
+        if (blocks == null || blocks.isEmpty()) {
+            return List.of();
         }
         List<ChunkCandidate> chunks = new ArrayList<>();
-        for (MarkdownSection section : sections) {
-            chunks.addAll(splitPlainText(section.content(), section.sectionTitle(), section.headingPath(), "markdown_section"));
+        for (DocumentBlock block : blocks) {
+            chunks.addAll(splitPlainText(
+                    block.text(),
+                    block.sectionTitle(),
+                    block.headingPath(),
+                    block.blockType(),
+                    block.pageNumber()));
         }
         return chunks;
     }
@@ -270,6 +315,14 @@ public class DocumentIngestionService {
     }
 
     private List<ChunkCandidate> splitPlainText(String text, String sectionTitle, String headingPath, String chunkType) {
+        return splitPlainText(text, sectionTitle, headingPath, chunkType, null);
+    }
+
+    private List<ChunkCandidate> splitPlainText(String text,
+                                                String sectionTitle,
+                                                String headingPath,
+                                                String chunkType,
+                                                Integer pageNumber) {
         if (text == null || text.isBlank()) {
             return List.of();
         }
@@ -280,7 +333,8 @@ public class DocumentIngestionService {
                         segment.text().strip(),
                         normalizeBlank(sectionTitle),
                         normalizeBlank(headingPath),
-                        chunkType
+                        chunkType,
+                        pageNumber
                 ))
                 .filter(chunk -> isValidChunk(chunk.text()))
                 .toList();
@@ -309,7 +363,7 @@ public class DocumentIngestionService {
         return path != null && Files.isRegularFile(path) && SUPPORTED_EXTENSIONS.contains(extension(path.getFileName().toString()));
     }
 
-    private List<Document> loadDocuments(Path rootPath) {
+    private List<LoadedDocument> loadDocuments(Path rootPath) {
         try (Stream<Path> paths = Files.walk(rootPath)) {
             return paths
                     .filter(this::isSupportedKnowledgeDocument)
@@ -321,9 +375,10 @@ public class DocumentIngestionService {
         }
     }
 
-    private Optional<Document> loadDocument(Path path) {
+    private Optional<LoadedDocument> loadDocument(Path path) {
         try {
-            String text = extractText(path);
+            List<DocumentBlock> blocks = extractDocumentBlocks(path);
+            String text = flattenBlocks(blocks);
             if (text == null || text.isBlank()) {
                 log.warn("RAG - 文档 [{}] 未提取到有效文本，已跳过", path);
                 return Optional.empty();
@@ -332,56 +387,133 @@ public class DocumentIngestionService {
             metadata.put("absolute_directory_path", path.toAbsolutePath().normalize().toString())
                     .put("file_extension", extension(path.getFileName().toString()))
                     .put("document_format", documentFormat(path.getFileName().toString()));
-            return Optional.of(Document.from(text, metadata));
+            return Optional.of(new LoadedDocument(Document.from(text, metadata), blocks));
         } catch (Exception e) {
             log.warn("RAG - 文档 [{}] 解析失败，已跳过: {}", path, e.getMessage());
             return Optional.empty();
         }
     }
 
-    private String extractText(Path path) throws IOException {
-        String extension = extension(path.getFileName().toString());
-        String text = switch (extension) {
-            case ".pdf" -> readPdf(path);
-            case ".doc" -> readDoc(path);
-            case ".docx" -> readDocx(path);
-            default -> Files.readString(path, StandardCharsets.UTF_8);
+    private List<DocumentBlock> extractDocumentBlocks(Path path) throws IOException {
+        String fileName = path.getFileName().toString();
+        if (isMarkdown(fileName)) {
+            return parseMarkdownBlocks(Files.readString(path, StandardCharsets.UTF_8));
+        }
+        String extension = extension(fileName);
+        return switch (extension) {
+            case ".pdf" -> readPdfBlocks(path);
+            case ".doc" -> readDocBlocks(path);
+            case ".docx" -> readDocxBlocks(path);
+            default -> parsePlainTextBlocks(Files.readString(path, StandardCharsets.UTF_8), "text_paragraph");
         };
-        return normalizeExtractedText(text);
     }
 
-    private String readPdf(Path path) throws IOException {
+    private List<DocumentBlock> readPdfBlocks(Path path) throws IOException {
         try (PDDocument document = PDDocument.load(path.toFile())) {
-            PDFTextStripper stripper = new PDFTextStripper();
-            stripper.setSortByPosition(true);
-            return stripper.getText(document);
+            List<DocumentBlock> blocks = new ArrayList<>();
+            for (int page = 1; page <= document.getNumberOfPages(); page++) {
+                PDFTextStripper stripper = new PDFTextStripper();
+                stripper.setSortByPosition(true);
+                stripper.setStartPage(page);
+                stripper.setEndPage(page);
+                String text = normalizeExtractedText(stripper.getText(document));
+                if (isValidChunk(text)) {
+                    blocks.add(new DocumentBlock(text, null, null, "pdf_page", page));
+                }
+            }
+            return blocks;
         }
     }
 
-    private String readDoc(Path path) throws IOException {
+    private List<DocumentBlock> readDocBlocks(Path path) throws IOException {
         try (InputStream inputStream = Files.newInputStream(path);
              HWPFDocument document = new HWPFDocument(inputStream);
              WordExtractor extractor = new WordExtractor(document)) {
-            return extractor.getText();
+            StringBuilder builder = new StringBuilder();
+            for (String paragraph : extractor.getParagraphText()) {
+                appendParagraph(builder, paragraph);
+            }
+            if (builder.isEmpty()) {
+                appendParagraph(builder, extractor.getText());
+            }
+            return parsePlainTextBlocks(builder.toString(), "word_paragraph");
         }
     }
 
-    private String readDocx(Path path) throws IOException {
+    private List<DocumentBlock> readDocxBlocks(Path path) throws IOException {
         try (InputStream inputStream = Files.newInputStream(path);
              XWPFDocument document = new XWPFDocument(inputStream)) {
-            StringBuilder builder = new StringBuilder();
+            List<DocumentBlock> blocks = new ArrayList<>();
+            String[] headings = new String[6];
+            String currentTitle = null;
+            String currentHeadingPath = null;
+            StringBuilder currentContent = new StringBuilder();
+
             for (IBodyElement element : document.getBodyElements()) {
                 if (element instanceof XWPFParagraph paragraph) {
-                    appendLine(builder, paragraph.getText());
+                    String paragraphText = normalizeLineText(paragraph.getText());
+                    if (paragraphText.isBlank()) {
+                        continue;
+                    }
+                    int headingLevel = headingLevel(paragraph, document);
+                    if (headingLevel > 0) {
+                        flushDocumentBlock(blocks, currentTitle, currentHeadingPath, currentContent, "word_section", null);
+                        headings[headingLevel - 1] = paragraphText;
+                        Arrays.fill(headings, headingLevel, headings.length, null);
+                        currentTitle = paragraphText;
+                        currentHeadingPath = buildHeadingPath(headings);
+                        currentContent = new StringBuilder(paragraphText);
+                    } else {
+                        appendParagraph(currentContent, paragraphText);
+                    }
                 } else if (element instanceof XWPFTable table) {
-                    appendTable(builder, table);
+                    appendParagraph(currentContent, tableText(table));
                 }
             }
-            return builder.toString();
+            flushDocumentBlock(blocks, currentTitle, currentHeadingPath, currentContent, "word_section", null);
+            return blocks;
         }
     }
 
-    private void appendTable(StringBuilder builder, XWPFTable table) {
+    private int headingLevel(XWPFParagraph paragraph, XWPFDocument document) {
+        List<String> styleCandidates = new ArrayList<>();
+        String styleId = paragraph.getStyle();
+        if (styleId != null && !styleId.isBlank()) {
+            styleCandidates.add(styleId);
+            XWPFStyles styles = document.getStyles();
+            if (styles != null) {
+                XWPFStyle style = styles.getStyle(styleId);
+                if (style != null && style.getName() != null && !style.getName().isBlank()) {
+                    styleCandidates.add(style.getName());
+                }
+            }
+        }
+        for (String candidate : styleCandidates) {
+            int level = headingLevel(candidate);
+            if (level > 0) {
+                return level;
+            }
+        }
+        return 0;
+    }
+
+    private int headingLevel(String styleName) {
+        String normalized = styleName == null ? "" : styleName.toLowerCase(Locale.ROOT)
+                .replaceAll("[\\s_-]+", "");
+        Matcher english = Pattern.compile("heading([1-6])").matcher(normalized);
+        if (english.find()) {
+            return Integer.parseInt(english.group(1));
+        }
+        Matcher chinese = Pattern.compile("标题([1-6])").matcher(normalized);
+        if (chinese.find()) {
+            return Integer.parseInt(chinese.group(1));
+        }
+        Matcher shortName = Pattern.compile("^h([1-6])$").matcher(normalized);
+        return shortName.matches() ? Integer.parseInt(shortName.group(1)) : 0;
+    }
+
+    private String tableText(XWPFTable table) {
+        StringBuilder builder = new StringBuilder();
         for (XWPFTableRow row : table.getRows()) {
             List<String> cells = new ArrayList<>();
             for (XWPFTableCell cell : row.getTableCells()) {
@@ -394,12 +526,65 @@ public class DocumentIngestionService {
                 appendLine(builder, String.join(" | ", cells));
             }
         }
+        return builder.toString().strip();
+    }
+
+    private void flushDocumentBlock(List<DocumentBlock> blocks,
+                                    String sectionTitle,
+                                    String headingPath,
+                                    StringBuilder content,
+                                    String blockType,
+                                    Integer pageNumber) {
+        if (content == null || content.isEmpty()) {
+            return;
+        }
+        String text = normalizeExtractedText(content.toString());
+        String title = normalizeBlank(sectionTitle);
+        if (title != null && title.equals(text)) {
+            return;
+        }
+        if (isValidChunk(text)) {
+            blocks.add(new DocumentBlock(text, title, normalizeBlank(headingPath), blockType, pageNumber));
+        }
+    }
+
+    private String flattenBlocks(List<DocumentBlock> blocks) {
+        if (blocks == null || blocks.isEmpty()) {
+            return "";
+        }
+        return blocks.stream()
+                .map(DocumentBlock::text)
+                .filter(text -> text != null && !text.isBlank())
+                .reduce("", (left, right) -> left + (left.isBlank() ? "" : "\n\n") + right)
+                .strip();
+    }
+
+    private void appendParagraph(StringBuilder builder, String text) {
+        String normalized = normalizeLineText(text);
+        if (normalized.isBlank()) {
+            return;
+        }
+        if (!builder.isEmpty()) {
+            builder.append("\n\n");
+        }
+        builder.append(normalized);
     }
 
     private void appendLine(StringBuilder builder, String text) {
         if (text != null && !text.isBlank()) {
             builder.append(text.strip()).append('\n');
         }
+    }
+
+    private String normalizeLineText(String text) {
+        if (text == null) {
+            return "";
+        }
+        return text
+                .replace('\u0000', ' ')
+                .replaceAll("[ \\t\\x0B\\f]+", " ")
+                .replaceAll("\\R+", " ")
+                .strip();
     }
 
     private String normalizeExtractedText(String text) {
@@ -509,6 +694,9 @@ public class DocumentIngestionService {
         if (chunk.headingPath() != null) {
             metadata.put("heading_path", chunk.headingPath());
         }
+        if (chunk.pageNumber() != null) {
+            metadata.put("page_number", chunk.pageNumber());
+        }
         return metadata;
     }
 
@@ -572,6 +760,9 @@ public class DocumentIngestionService {
     private record MarkdownSection(String sectionTitle, String headingPath, String content) {
     }
 
-    private record ChunkCandidate(String text, String sectionTitle, String headingPath, String chunkType) {
+    private record LoadedDocument(Document document, List<DocumentBlock> blocks) {
+    }
+
+    private record ChunkCandidate(String text, String sectionTitle, String headingPath, String chunkType, Integer pageNumber) {
     }
 }

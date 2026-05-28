@@ -25,6 +25,8 @@ public class Citation {
 
     private String headingPath;
 
+    private Integer pageNumber;
+
     private String snippet;
 
     private String retrievalSource;

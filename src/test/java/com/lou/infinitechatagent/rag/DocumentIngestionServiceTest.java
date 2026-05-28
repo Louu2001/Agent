@@ -52,11 +52,34 @@ class DocumentIngestionServiceTest {
         assertThat(chunks).isEmpty();
     }
 
+    @Test
+    void splitBlocksShouldKeepPageMetadata() throws Exception {
+        DocumentIngestionService service = new DocumentIngestionService();
+        ReflectionTestUtils.setField(service, "segmentSize", 500);
+        ReflectionTestUtils.setField(service, "segmentOverlap", 80);
+        ReflectionTestUtils.setField(service, "minChunkChars", 20);
+
+        List<?> chunks = invokeSplitBlocks(service, List.of(
+                new DocumentBlock("PDF 第三页包含 Redis 持久化、AOF 重写和 RDB 快照的知识说明。", null, null, "pdf_page", 3)
+        ));
+
+        assertThat(chunks).hasSize(1);
+        assertThat(readRecordValue(chunks.get(0), "chunkType")).isEqualTo("pdf_page");
+        assertThat(readRecordValue(chunks.get(0), "pageNumber")).isEqualTo(3);
+    }
+
     @SuppressWarnings("unchecked")
     private List<?> invokeSplitMarkdown(DocumentIngestionService service, String markdown) throws Exception {
         Method method = DocumentIngestionService.class.getDeclaredMethod("splitMarkdown", String.class);
         method.setAccessible(true);
         return (List<?>) method.invoke(service, markdown);
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<?> invokeSplitBlocks(DocumentIngestionService service, List<DocumentBlock> blocks) throws Exception {
+        Method method = DocumentIngestionService.class.getDeclaredMethod("splitBlocks", List.class);
+        method.setAccessible(true);
+        return (List<?>) method.invoke(service, blocks);
     }
 
     private Object readRecordValue(Object record, String methodName) throws Exception {
